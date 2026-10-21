@@ -63,7 +63,7 @@ if submit_button and query:
             """
             
             response = client.chat.completions.create(
-                model="gpt-4o",
+              model="openai/gpt-4o",
                 messages=[
                     {"role": "system", "content": "You are a helpful knowledge management assistant."},
                     {"role": "user", "content": prompt}
