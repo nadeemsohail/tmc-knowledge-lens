@@ -1,30 +1,30 @@
 import streamlit as st
 from openai import OpenAI
 
+# 1. Page Configuration
 st.set_page_config(page_title="TMC Knowledge Lens", layout="wide")
 
 st.title("🔍 TMC Knowledge Lens")
 st.subheader("AI Search & Q&A Layer for TMC Project Documentation")
 
-# Initialize the OpenAI client using GitHub Models
-# We pull the token safely from Streamlit Secrets
+# 2. Initialize API Client using GitHub Models
 try:
     client = OpenAI(
         base_url="https://models.github.ai/inference",
         api_key=st.secrets["GITHUB_TOKEN"],
     )
 except Exception as e:
-    st.error(f"API Key not configured properly: {e}")
+    st.error(f"API Key not configured properly in Streamlit Secrets: {e}")
     st.stop()
 
-# Sidebar for metadata filtering (Taxonomy)
+# 3. Sidebar for Metadata Filtering (Taxonomy)
 with st.sidebar:
     st.header("Filter by Metadata")
     client_name = st.selectbox("Client", ["All", "Tata Motors", "TML", "Other"])
     module = st.selectbox("SAP Module", ["All", "FI", "CO", "MM", "SD", "S/4HANA"])
     doc_type = st.selectbox("Document Type", ["All", "Blueprint", "BRD", "Proposal", "Cutover Plan"])
 
-# A sample document to act as our "Knowledge Base" for this test
+# 4. Sample Document (Knowledge Base)
 sample_document = """
 Tata Motors S/4HANA Blueprint Document.
 Client: Tata Motors Ltd (TML).
@@ -41,7 +41,7 @@ Key Decisions:
 5. Cutover strategy will involve a 48-hour system downtime window.
 """
 
-# Main search interface
+# 5. Main Search Interface
 query = st.text_input("Ask a question about past projects (e.g., 'What is the cutover strategy?')")
 
 if st.button("Search Knowledge Base"):
@@ -60,9 +60,9 @@ if st.button("Search Knowledge Base"):
                 Question: {query}
                 """
                 
-                # Call GitHub Models (using GPT-4o-mini for speed)
+                # Call GitHub Models API
                 response = client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-4o",
                     messages=[
                         {"role": "system", "content": "You are a helpful knowledge management assistant."},
                         {"role": "user", "content": prompt}
@@ -70,6 +70,7 @@ if st.button("Search Knowledge Base"):
                     temperature=0.2
                 )
                 
+                # Extract the answer
                 answer = response.choices[0].message.content
                 
                 # Display results
@@ -81,6 +82,7 @@ if st.button("Search Knowledge Base"):
                 st.markdown("- `TataMotors_S4HANA_Blueprint_v2.pdf` (Page 14)")
                 
             except Exception as e:
-                st.error(f"An error occurred: {e}")
+                # This will catch API errors and print them as text instead of crashing
+                st.error(f"API Error: {str(e)}")
     else:
         st.warning("Please enter a question.")
