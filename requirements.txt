@@ -1,6 +1,3 @@
 streamlit
-langchain
-langchain-community
-chromadb
+openai
 pypdf
-sentence-transformers
