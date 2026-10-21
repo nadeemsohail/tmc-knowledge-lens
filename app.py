@@ -10,7 +10,7 @@ st.subheader("AI Search & Q&A Layer for TMC Project Documentation")
 # We pull the token safely from Streamlit Secrets
 try:
     client = OpenAI(
-        base_url="https://models.inference.ai.azure.com",
+        base_url="https://models.github.ai/inference",
         api_key=st.secrets["GITHUB_TOKEN"],
     )
 except Exception as e:
