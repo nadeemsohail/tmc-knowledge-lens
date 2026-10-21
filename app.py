@@ -7,11 +7,11 @@ st.set_page_config(page_title="TMC Knowledge Lens", layout="wide")
 st.title("🔍 TMC Knowledge Lens")
 st.subheader("AI Search & Q&A Layer for TMC Project Documentation")
 
-# 2. Initialize API Client
+# 2. Initialize Groq API Client
 try:
     client = OpenAI(
-        base_url="https://models.github.ai/inference",
-        api_key=st.secrets["GITHUB_TOKEN"],
+        base_url="https://api.groq.com/openai/v1", # Groq API URL
+        api_key=st.secrets["GITHUB_TOKEN"],        # We use the same secret name
     )
 except Exception as e:
     st.error(f"API Key not configured properly: {e}")
@@ -44,7 +44,6 @@ Key Decisions:
 # 5. Form for Enter Key Submission
 with st.form(key="search_form"):
     query = st.text_input("Ask a question about past projects (e.g., 'What is the cutover strategy?')")
-    # The submit button inside the form allows pressing Enter to submit
     submit_button = st.form_submit_button("Search Knowledge Base")
 
 # 6. Handle Submission
@@ -62,8 +61,9 @@ if submit_button and query:
             Question: {query}
             """
             
+            # Call Groq API
             response = client.chat.completions.create(
-              model="openai/gpt-4o",
+                model="openai/gpt-oss-120b", # Model selected from your list
                 messages=[
                     {"role": "system", "content": "You are a helpful knowledge management assistant."},
                     {"role": "user", "content": prompt}
@@ -71,19 +71,16 @@ if submit_button and query:
                 temperature=0.2
             )
             
-            # --- THE FIX: Check if response is a string (error) ---
-            if isinstance(response, str):
-                st.error(f"GitHub API returned an error text: {response}")
-            else:
-                # It's a proper object, so we can access .choices
-                answer = response.choices[0].message.content
-                
-                st.info(f"Searching for: '{query}' (Filtered by: Client={client_name}, Module={module}, Type={doc_type})")
-                st.success("✅ **Answer found:**")
-                st.write(answer)
-                
-                st.markdown("**Source Citations:**")
-                st.markdown("- `TataMotors_S4HANA_Blueprint_v2.pdf` (Page 14)")
+            # Extract answer
+            answer = response.choices[0].message.content
+            
+            # Display results
+            st.info(f"Searching for: '{query}' (Filtered by: Client={client_name}, Module={module}, Type={doc_type})")
+            st.success("✅ **Answer found:**")
+            st.write(answer)
+            
+            st.markdown("**Source Citations:**")
+            st.markdown("- `TataMotors_S4HANA_Blueprint_v2.pdf` (Page 14)")
                 
         except Exception as e:
             st.error(f"An error occurred: {e}")
