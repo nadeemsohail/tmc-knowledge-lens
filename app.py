@@ -65,23 +65,29 @@ st.markdown("""
 #MainMenu, footer { visibility:hidden; }
 div[data-testid="stVerticalBlockBorderWrapper"] { border-radius:18px; }
 .stButton>button, .stDownloadButton>button { border-radius:999px; font-weight:600; }
-.stButton>button[kind="primary"] { background:#5B2C6F; border:none; color:#fff; }
-.stButton>button[kind="primary"]:hover { background:#7D3C98; }
-.topbar { display:flex; align-items:center; gap:18px; background:#fff; padding:12px 26px;
-          border-radius:18px; border:1px solid #E3E6EE; margin-bottom:14px; }
-.topbar h1 { color:#5B2C6F; margin:0; font-size:1.55rem; }
-.topbar p { color:#6B7280; margin:0; font-size:.9rem; }
+.stButton>button[kind="primary"] { background:#0F6B45; border:none; color:#fff; }
+.stButton>button[kind="primary"]:hover { background:#138A58; }
+.topbar { display:flex; align-items:center; gap:20px; padding:16px 28px; border-radius:18px; margin-bottom:14px;
+          background:linear-gradient(120deg,#0A4F34 0%,#0F6B45 55%,#1A8A5A 100%); box-shadow:0 4px 14px rgba(10,79,52,.25); }
+.topbar .logo { background:#fff; border-radius:12px; padding:8px 12px; display:flex; align-items:center; }
+.topbar .titles { flex:1; }
+.topbar h1 { color:#FFFFFF; margin:0; font-size:1.7rem; letter-spacing:.2px; }
+.topbar p { color:#D4EDE0; margin:2px 0 0; font-size:.92rem; }
+.topbar .pills { display:flex; gap:10px; }
+.topbar .pill { background:rgba(255,255,255,.15); color:#fff; border:1px solid rgba(255,255,255,.3);
+                border-radius:999px; padding:6px 14px; font-size:.82rem; white-space:nowrap; }
+.panel-title { display:flex; align-items:center; gap:8px; font-weight:700; font-size:1.1rem; color:#0F6B45; margin-bottom:4px; }
 .chip { display:inline-block; padding:1px 9px; border-radius:999px; background:#EEF0F6;
         color:#3B4252; font-size:.72rem; margin:2px 4px 2px 0; }
-.chip.p { background:#F1E6F6; color:#5B2C6F; }
+.chip.p { background:#E3F3EA; color:#0F6B45; }
 .ok  { background:#E6F4EA; color:#137333; }
 .old { background:#FEF3E0; color:#B06000; }
 .doc-title { font-weight:600; font-size:.92rem; line-height:1.25; }
 .relbar { height:4px; background:#E8EAF0; border-radius:4px; margin:6px 0 2px; }
-.relbar>div { height:4px; background:#5B2C6F; border-radius:4px; }
+.relbar>div { height:4px; background:#0F6B45; border-radius:4px; }
 .snip { font-size:.78rem; color:#5F6368; border-left:3px solid #D7DCE8; padding-left:8px; margin-top:4px; }
-.glance { background:#F4EEF8; border-left:5px solid #5B2C6F; padding:14px 18px; border-radius:12px; margin-bottom:10px; }
-.glance h4 { margin:0 0 6px; color:#5B2C6F; }
+.glance { background:#EAF6EF; border-left:5px solid #0F6B45; padding:14px 18px; border-radius:12px; margin-bottom:10px; }
+.glance h4 { margin:0 0 6px; color:#0F6B45; }
 .small { font-size:.8rem; color:#6B7280; }
 </style>
 """, unsafe_allow_html=True)
@@ -490,7 +496,7 @@ def build_pptx(r):
 def build_xlsx(r):
     wb = openpyxl.Workbook()
     head = Font(bold=True, color="FFFFFF")
-    fill = PatternFill("solid", fgColor="5B2C6F")
+    fill = PatternFill("solid", fgColor="0F6B45")
 
     def sheet(ws, header, rows, widths):
         ws.append(header)
@@ -530,7 +536,7 @@ def build_pdf(r):
         data = [[Paragraph(f"<b>{esc(c)}</b>", ss["BodyText"]) for c in r["table"]["columns"]]]
         data += [[Paragraph(esc(v), ss["BodyText"]) for v in row] for row in r["table"]["rows"]]
         t = Table(data, repeatRows=1)
-        t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E8DAEF")),
+        t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D5EDE0")),
                                ("VALIGN", (0, 0), (-1, -1), "TOP")]))
         story += [Spacer(1, 10), t]
     story.append(Paragraph("Sources", ss["Heading2"]))
@@ -660,13 +666,14 @@ by_id = {d["id"]: d for d in ss_.library}
 # ----------------------------------------------------------------------------
 # Header + tabs
 # ----------------------------------------------------------------------------
-st.markdown("""
+st.markdown(f"""
 <div class="topbar">
-  <img src="https://tmcltd.com/wp-content/uploads/2025/10/TallyMarks-Consulting-TMC-logo.webp" width="72">
-  <div><h1>Knowledge Lens</h1><p>Search TMC project knowledge, select what matters, get cited answers and ready-to-send reports.</p></div>
+  <div class="logo"><img src="https://tmcltd.com/wp-content/uploads/2025/10/TallyMarks-Consulting-TMC-logo.webp" width="64"></div>
+  <div class="titles"><h1>🔍 Knowledge Lens</h1><p>Search TMC project knowledge, select what matters, get cited answers and ready-to-send reports.</p></div>
+  <div class="pills"><span class="pill">📚 {len(visible)} documents</span><span class="pill">☑️ {len(selected_docs)} selected</span><span class="pill">👤 {esc(ss_.user["name"])}</span></div>
 </div>""", unsafe_allow_html=True)
 
-tab_ws, tab_admin = st.tabs(["Workspace", "Admin & pilot metrics"])
+tab_ws, tab_admin = st.tabs(["🧭 Workspace", "🛠️ Admin & pilot metrics"])
 
 # ============================================================================
 # WORKSPACE
@@ -677,21 +684,21 @@ with tab_ws:
     # ---------------- LEFT: SOURCES ----------------
     with col_src:
         with st.container(height=PANEL_H, border=True):
-            st.markdown("#### Sources")
+            st.markdown('<div class="panel-title">📁 Sources</div>', unsafe_allow_html=True)
             for kind, msg in ss_.flash:
                 getattr(st, kind)(msg)
             ss_.flash = []
 
             with st.form("search_form"):
                 q = st.text_input("Search", placeholder="Search the library: client, SAP module, topic…", label_visibility="collapsed")
-                go = st.form_submit_button("Search library", type="primary", use_container_width=True)
+                go = st.form_submit_button("🔍 Search library", type="primary", use_container_width=True)
 
-            with st.expander("Filters"):
-                f_client = st.multiselect("Client", sorted({d["meta"]["client"] for d in visible}), key="f_client")
-                f_type = st.multiselect("Document type", sorted({d["meta"]["doc_type"] for d in visible}), key="f_type")
-                f_mod = st.multiselect("SAP module", sorted({d["meta"]["sap_module"] for d in visible}), key="f_mod")
-                f_phase = st.multiselect("Phase", sorted({d["meta"]["phase"] for d in visible}), key="f_phase")
-                f_old = st.toggle("Include superseded versions", value=False, key="f_old")
+            with st.expander("🎚️ Filters"):
+                f_client = st.multiselect("🏢 Client", sorted({d["meta"]["client"] for d in visible}), key="f_client")
+                f_type = st.multiselect("📑 Document type", sorted({d["meta"]["doc_type"] for d in visible}), key="f_type")
+                f_mod = st.multiselect("🧩 SAP module", sorted({d["meta"]["sap_module"] for d in visible}), key="f_mod")
+                f_phase = st.multiselect("🪜 Phase", sorted({d["meta"]["phase"] for d in visible}), key="f_phase")
+                f_old = st.toggle("🕘 Include superseded versions", value=False, key="f_old")
 
             def passes(d):
                 m = d["meta"]
@@ -720,11 +727,11 @@ with tab_ws:
 
             st.caption(label)
             if ss_.results:
-                st.button("Clear search", on_click=clear_results, use_container_width=True)
+                st.button("✖️ Clear search", on_click=clear_results, use_container_width=True)
             if shown:
                 a, b = st.columns(2)
-                a.button("Select all", on_click=select_all, args=([s["id"] for s in shown],), use_container_width=True)
-                b.button("Clear selection", on_click=clear_selection, use_container_width=True)
+                a.button("☑️ Select all", on_click=select_all, args=([s["id"] for s in shown],), use_container_width=True)
+                b.button("🧹 Clear", on_click=clear_selection, use_container_width=True)
             else:
                 st.info("No documents yet. Add documents below, or loosen the filters." if not ss_.library else "Nothing matches. Try other words or clear the filters.")
 
@@ -736,21 +743,21 @@ with tab_ws:
                     ss_[key] = d["id"] in ss_.selected
                 c1, c2 = st.columns([1, 9])
                 c1.checkbox("select", key=key, on_change=toggle, args=(d["id"],), label_visibility="collapsed")
-                badge = '<span class="chip ok">Current</span>' if d["status"] == "Current" else '<span class="chip old">Superseded</span>'
-                body = f'<div class="doc-title">{esc(m["doc_title"])}</div>{badge}{chip(m["doc_type"], "p")}{chip(m["client"])}{chip(m["sap_module"])}{chip(m["phase"])}'
+                badge = '<span class="chip ok">✅ Current</span>' if d["status"] == "Current" else '<span class="chip old">⚠️ Superseded</span>'
+                body = f'<div class="doc-title">{esc(m["doc_title"])}</div>{badge}{chip('📑 ' + m["doc_type"], "p")}{chip('🏢 ' + m["client"])}{chip('🧩 ' + m["sap_module"])}{chip('🪜 ' + m["phase"])}'
                 if it["rel"] is not None:
-                    body += f'<div class="relbar"><div style="width:{it["rel"]}%"></div></div><div class="small">Relevance {it["rel"]}%' + (f' • {d["unit"]} {it["page"]}' if it["page"] else "") + "</div>"
+                    body += f'<div class="relbar"><div style="width:{it["rel"]}%"></div></div><div class="small">🎯 Relevance {it["rel"]}%' + (f' • 📍 {d["unit"]} {it["page"]}' if it["page"] else "") + "</div>"
                     if it["snippet"]:
                         body += f'<div class="snip">{esc(it["snippet"])}</div>'
                 c2.markdown(body, unsafe_allow_html=True)
 
             st.markdown("---")
-            with st.expander("Add documents to the library"):
+            with st.expander("➕ Add documents to the library"):
                 files = st.file_uploader("Files", type=list(EXTRACTORS), accept_multiple_files=True,
                                          key=f"up_{ss_.up_key}", label_visibility="collapsed")
                 access = st.multiselect("Who can see these?", ["All"] + GROUPS, default=["All"])
                 ok = st.checkbox("I confirm these files are sanitized and approved for Knowledge Lens")
-                if st.button("Add to library", disabled=not (files and ok), use_container_width=True):
+                if st.button("📤 Add to library", disabled=not (files and ok), use_container_width=True):
                     for f in files:
                         with st.spinner(f"Reading and tagging {f.name}…"):
                             try:
@@ -765,8 +772,8 @@ with tab_ws:
         with st.container(height=PANEL_H, border=True):
             n = len(selected_docs)
             h1, h2 = st.columns([3, 2])
-            h1.markdown(f"#### Project at a glance  \n<span class='small'>{n} source(s) selected</span>", unsafe_allow_html=True)
-            if h2.button("Summarize selected", type="primary", disabled=n == 0, use_container_width=True):
+            h1.markdown(f"<div class='panel-title'>📌 Project at a glance</div><span class='small'>{n} source(s) selected</span>", unsafe_allow_html=True)
+            if h2.button("✨ Summarize selected", type="primary", disabled=n == 0, use_container_width=True):
                 with st.spinner("Summarizing…"):
                     try:
                         ss_.summary = make_summary(selected_docs)
@@ -786,9 +793,14 @@ with tab_ws:
             else:
                 st.info("Search, tick the documents you need, then press Summarize selected.")
 
-            st.markdown("##### Ask the selected documents")
+            st.markdown('<div class="panel-title">💬 Ask the selected documents</div>', unsafe_allow_html=True)
             chat_box = st.container(height=330, border=False)
-            prompt = st.chat_input("Ask a question about the selected documents…", disabled=n == 0)
+            QUICK = [("⚠️ Key risks", "What are the key risks and issues?"), ("📅 Timeline", "What is the timeline and key milestones?"),
+                     ("📦 Deliverables", "What are the main deliverables?"), ("🔁 Compare", "Compare these documents: similarities and differences.")]
+            qcols = st.columns(4)
+            for (lab, text), qc in zip(QUICK, qcols):
+                qc.button(lab, key=f"quick_{lab}", disabled=n == 0, on_click=lambda t=text: ss_.__setitem__("pending_q", t), use_container_width=True)
+            prompt = st.chat_input("Ask a question about the selected documents…", disabled=n == 0) or ss_.pop("pending_q", None)
             if prompt:
                 t0 = time.time()
                 try:
@@ -807,7 +819,7 @@ with tab_ws:
                     with st.chat_message("assistant"):
                         st.write(c["a"])
                         if c["cites"]:
-                            with st.expander("Sources"):
+                            with st.expander("📚 Sources"):
                                 for x in c["cites"]:
                                     st.markdown(f"**[S{x['n']}] {x['title']}** - {x['loc']}")
                                     st.caption(x["snippet"])
@@ -821,11 +833,11 @@ with tab_ws:
     # ---------------- RIGHT: STUDIO ----------------
     with col_studio:
         with st.container(height=PANEL_H, border=True):
-            st.markdown("#### Studio")
+            st.markdown('<div class="panel-title">🎛️ Studio</div>', unsafe_allow_html=True)
 
-            with st.expander("Find similar past work", expanded=False):
+            with st.expander("🧭 Find similar past work", expanded=False):
                 rfp = st.file_uploader("Upload an RFP or brief", type=["pdf", "docx", "pptx", "txt"], key=f"rfp_{ss_.rfp_key}", label_visibility="collapsed")
-                if st.button("Find similar documents", disabled=rfp is None, use_container_width=True):
+                if st.button("🔎 Find similar documents", disabled=rfp is None, use_container_width=True):
                     pages, _, _ = EXTRACTORS[rfp.name.rsplit(".", 1)[-1].lower()](rfp.getvalue())
                     words = Counter(t for t in tok(" ".join(pages)[:20000]) if len(t) > 3)
                     query = " ".join(w for w, _ in words.most_common(40))
@@ -833,10 +845,10 @@ with tab_ws:
                     audit("similar_search", file=rfp.name)
                     st.success("Matches are listed under Sources.")
 
-            st.markdown("**Generate report**")
+            st.markdown('<div class="panel-title">📝 Generate report</div>', unsafe_allow_html=True)
             rtype = st.selectbox("Report type", list(REPORT_TYPES), label_visibility="collapsed")
             focus = st.text_area("Focus", placeholder="Optional: what should the report concentrate on?", height=80)
-            if st.button("Generate report", type="primary", disabled=not selected_docs, use_container_width=True):
+            if st.button("🚀 Generate report", type="primary", disabled=not selected_docs, use_container_width=True):
                 with st.spinner("Writing the report in 4 formats…"):
                     try:
                         ss_.report = make_report(rtype, focus.strip(), selected_docs, tax)
@@ -852,32 +864,32 @@ with tab_ws:
                 MIME = {"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
                         "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "pdf": "application/pdf"}
-                LAB = {"docx": "Word", "pptx": "PowerPoint", "xlsx": "Excel", "pdf": "PDF"}
+                LAB = {"docx": "📄 Word", "pptx": "📽️ PowerPoint", "xlsx": "📊 Excel", "pdf": "📕 PDF"}
                 g = st.columns(2)
                 for i, ext in enumerate(["docx", "pptx", "xlsx", "pdf"]):
                     g[i % 2].download_button(LAB[ext], rp["files"][ext], file_name=f"{rp['stem']}.{ext}", mime=MIME[ext],
                                              key=f"dl_{ext}", use_container_width=True)
-                with st.expander("Preview"):
+                with st.expander("👁️ Preview"):
                     st.write(rp["data"]["executive_summary"])
                     for s in rp["data"]["sections"]:
                         st.markdown(f"**{s['heading']}**")
                         st.markdown("\n".join(f"- {b}" for b in s["bullets"]))
 
             if selected_docs:
-                st.markdown("**Selected sources**")
+                st.markdown('<div class="panel-title">🗂️ Selected sources</div>', unsafe_allow_html=True)
                 for d in selected_docs:
                     m = d["meta"]
                     with st.expander(m["doc_title"]):
-                        st.markdown(f"**Client:** {esc(m['client'])}  \n**Type:** {esc(m['doc_type'])}  \n**SAP module:** {esc(m['sap_module'])}  \n"
-                                    f"**Phase:** {esc(m['phase'])}  \n**Version:** {esc(m['version'] or '-')}  \n**Author:** {esc(d['author'])}  \n"
-                                    f"**Status:** {d['status']}  \n**Added by:** {esc(d['uploaded_by'])}", unsafe_allow_html=False)
+                        st.markdown(f"🏢 **Client:** {esc(m['client'])}  \n📑 **Type:** {esc(m['doc_type'])}  \n🧩 **SAP module:** {esc(m['sap_module'])}  \n"
+                                    f"🪜 **Phase:** {esc(m['phase'])}  \n🔖 **Version:** {esc(m['version'] or '-')}  \n✍️ **Author:** {esc(d['author'])}  \n"
+                                    f"{'✅' if d['status'] == 'Current' else '⚠️'} **Status:** {d['status']}  \n👤 **Added by:** {esc(d['uploaded_by'])}")
                         if m["summary"]:
                             st.caption(m["summary"])
                         if d["status"] == "Superseded" and d.get("superseded_by") in by_id:
                             st.warning(f"Newer version: {by_id[d['superseded_by']]['meta']['doc_title']}")
                         p = Path(d.get("path", ""))
                         if p.exists():
-                            st.download_button("Download original", p.read_bytes(), file_name=d["name"], key=f"orig_{d['id']}")
+                            st.download_button("⬇️ Download original", p.read_bytes(), file_name=d["name"], key=f"orig_{d['id']}")
 
 # ============================================================================
 # ADMIN & PILOT METRICS
