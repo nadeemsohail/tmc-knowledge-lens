@@ -1,6 +1,6 @@
 """
 TMC Knowledge Lens - Production Workspace
-UI/UX: Custom Search Bar, Navigation Menu, Footer, and detailed Info Pages.
+UI/UX: Custom Search Bar, Navigation Menu, Footer, detailed Info Pages.
 """
 import streamlit as st
 from openai import OpenAI
@@ -137,7 +137,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] { border-radius:18px; background
 """, unsafe_allow_html=True)
 
 # ----------------------------------------------------------------------------
-# LLM Client & Helper Functions (Same as before)
+# LLM Client & Helpers
 # ----------------------------------------------------------------------------
 API_KEY = st.secrets.get("GROQ_API_KEY") or st.secrets.get("GITHUB_TOKEN")
 if not API_KEY:
@@ -155,9 +155,6 @@ def parse_json(raw):
     except Exception:
         m = re.search(r"\{.*\}", raw, re.S)
         return json.loads(m.group(0)) if m else {}
-
-# [Data, Persistence, Audit, Text Extraction, Vectors, Retrieval, Tagging, Exports remain unchanged for brevity]
-# (In a real environment, these blocks remain exactly as you had them, I will include them fully in the script below)
 
 def load_taxonomy(): return json.loads((DATA / "taxonomy.json").read_text("utf-8")) if (DATA / "taxonomy.json").exists() else DEFAULT_TAXONOMY
 def save_taxonomy(t): (DATA / "taxonomy.json").write_text(json.dumps(t, indent=2, ensure_ascii=False), "utf-8")
@@ -447,7 +444,8 @@ def build_docx(r):
         t = d.add_table(rows=1, cols=len(r["table"]["columns"])); t.style = "Light Grid Accent 1"
         for i, c in enumerate(r["table"]["columns"]): t.rows[0].cells[i].text = c
         for row in r["table"]["rows"]:
-            cells = t.add_row().cells            for i, v in enumerate(row): cells[i].text = v
+            cells = t.add_row().cells
+            for i, v in enumerate(row): cells[i].text = v
     d.add_heading("Sources", 1)
     for s in r["sources"]: d.add_paragraph(s, style="List Bullet")
     buf = io.BytesIO(); d.save(buf); return buf.getvalue()
@@ -758,9 +756,7 @@ with tabs[0]:
 
             # CUSTOM SEARCH BAR (Like the screenshot)
             with st.form("search_form"):
-                # We use an empty label and placeholder to match the clean look
                 q = st.text_input("Search", placeholder="Ask a question or create something", label_visibility="collapsed")
-                # Using columns to simulate the arrow button and "5 sources" text inside the bar area visually
                 c1, c2 = st.columns([8, 2])
                 with c1:
                     go = st.form_submit_button("Search", use_container_width=True, type="primary")
@@ -934,204 +930,207 @@ with tabs[0]:
 # ============================================================================
 # TAB 2: ADMIN
 # ============================================================================
-with tabs[1] if ss_.user["admin"] else st.container():
-    if not ss_.user["admin"]: st.info("🔒 The admin area is available to the Admin role only.")
-    else:
-        t_users, t_lib, t_vocab, t_store, t_audit = st.tabs(["👥 Users & roles", "📚 Library", "🏷️ Vocabulary", "💾 Storage & search index", "🧾 Audit log"])
-        
-        # --- USER MANAGEMENT CALLBACKS ---
-        def _msg(kind, text): ss_.setdefault("user_msgs", []).append((kind, text))
-        def _active_admins(users): return [k for k, v in users.items() if v["role"] == ROLE_ADMIN and v["active"]]
-        def cb_create_user():
-            users = load_users(); name, un = ss_.get("nu_name", "").strip(), ss_.get("nu_user", "").strip().lower()
-            role, pw = ss_.get("nu_role", ROLE_CONS), ss_.get("nu_pw", ""); mods = ss_.get("nu_mods", []) if role == ROLE_CONS else []
-            if not name or not un: return _msg("error", "Enter the person's full name and a username.")
-            if not re.fullmatch(r"[a-z0-9._-]{3,32}", un): return _msg("error", "Username must be 3-32 characters: lowercase letters, numbers, dot, dash or underscore.")
-            if un in users: return _msg("error", f"The username “{un}” already exists.")
-            if pw_problem(pw): return _msg("error", pw_problem(pw))
-            if role == ROLE_CONS and not mods: return _msg("error", "Select at least one SAP module, otherwise the consultant would see no documents.")
-            users[un] = new_user_record(un, name, role, mods, pw, True, ss_.user["username"])
-            save_users(users); audit("user_create", target=un, role=role, modules=mods); ss_.shown_pw = (un, pw)
-            _msg("success", f"✅ User {name} ({un}) created as {role}.")
-            for k in ("nu_name", "nu_user", "nu_pw"): ss_[k] = ""
-            ss_["nu_mods"] = []
-        def cb_save_user(sel):
-            users = load_users(); u = users[sel]; role, active = ss_[f"mu_role_{sel}"], ss_[f"mu_active_{sel}"]; mods = ss_.get(f"mu_mods_{sel}", []) if role == ROLE_CONS else []
-            if sel == ss_.user["username"] and (role != ROLE_ADMIN or not active): return _msg("error", "You cannot remove your own admin role or disable your own account.")
-            before = u.copy(); u.update(name=ss_[f"mu_name_{sel}"].strip() or u["name"], role=role, modules=mods, active=active)
-            if not _active_admins(users): return _msg("error", "At least one active Admin must remain.")
-            if active and not before["active"]: u.update(fails=0, locked_until=0)
-            save_users(users); audit("user_update", target=sel, role=role, modules=mods, active=active); _msg("success", f"💾 Saved changes for {sel}.")
-        def cb_reset_pw(sel):
-            users = load_users(); pw = gen_password(); users[sel]["salt"], users[sel]["hash"] = hash_pw(pw); users[sel].update(must_change=True, fails=0, locked_until=0)
-            save_users(users); audit("password_reset", target=sel); ss_.shown_pw = (sel, pw); _msg("success", f"🔄 Password reset for {sel}.")
-        def cb_delete_user(sel):
-            users = load_users()
-            if sel == ss_.user["username"]: return _msg("error", "You cannot delete your own account.")
-            gone = users.pop(sel)
-            if not _active_admins(users): return _msg("error", "At least one active Admin must remain.")
-            save_users(users); audit("user_delete", target=sel, role=gone["role"]); _msg("success", f"🗑️ User {sel} deleted.")
+if len(tabs) > 1:
+    with tabs[1]:
+        if not ss_.user["admin"]: st.info("🔒 The admin area is available to the Admin role only.")
+        else:
+            t_users, t_lib, t_vocab, t_store, t_audit = st.tabs(["👥 Users & roles", "📚 Library", "🏷️ Vocabulary", "💾 Storage & search index", "🧾 Audit log"])
+            
+            # --- USER MANAGEMENT CALLBACKS ---
+            def _msg(kind, text): ss_.setdefault("user_msgs", []).append((kind, text))
+            def _active_admins(users): return [k for k, v in users.items() if v["role"] == ROLE_ADMIN and v["active"]]
+            def cb_create_user():
+                users = load_users(); name, un = ss_.get("nu_name", "").strip(), ss_.get("nu_user", "").strip().lower()
+                role, pw = ss_.get("nu_role", ROLE_CONS), ss_.get("nu_pw", ""); mods = ss_.get("nu_mods", []) if role == ROLE_CONS else []
+                if not name or not un: return _msg("error", "Enter the person's full name and a username.")
+                if not re.fullmatch(r"[a-z0-9._-]{3,32}", un): return _msg("error", "Username must be 3-32 characters: lowercase letters, numbers, dot, dash or underscore.")
+                if un in users: return _msg("error", f"The username “{un}” already exists.")
+                if pw_problem(pw): return _msg("error", pw_problem(pw))
+                if role == ROLE_CONS and not mods: return _msg("error", "Select at least one SAP module, otherwise the consultant would see no documents.")
+                users[un] = new_user_record(un, name, role, mods, pw, True, ss_.user["username"])
+                save_users(users); audit("user_create", target=un, role=role, modules=mods); ss_.shown_pw = (un, pw)
+                _msg("success", f"✅ User {name} ({un}) created as {role}.")
+                for k in ("nu_name", "nu_user", "nu_pw"): ss_[k] = ""
+                ss_["nu_mods"] = []
+            def cb_save_user(sel):
+                users = load_users(); u = users[sel]; role, active = ss_[f"mu_role_{sel}"], ss_[f"mu_active_{sel}"]; mods = ss_.get(f"mu_mods_{sel}", []) if role == ROLE_CONS else []
+                if sel == ss_.user["username"] and (role != ROLE_ADMIN or not active): return _msg("error", "You cannot remove your own admin role or disable your own account.")
+                before = u.copy(); u.update(name=ss_[f"mu_name_{sel}"].strip() or u["name"], role=role, modules=mods, active=active)
+                if not _active_admins(users): return _msg("error", "At least one active Admin must remain.")
+                if active and not before["active"]: u.update(fails=0, locked_until=0)
+                save_users(users); audit("user_update", target=sel, role=role, modules=mods, active=active); _msg("success", f"💾 Saved changes for {sel}.")
+            def cb_reset_pw(sel):
+                users = load_users(); pw = gen_password(); users[sel]["salt"], users[sel]["hash"] = hash_pw(pw); users[sel].update(must_change=True, fails=0, locked_until=0)
+                save_users(users); audit("password_reset", target=sel); ss_.shown_pw = (sel, pw); _msg("success", f"🔄 Password reset for {sel}.")
+            def cb_delete_user(sel):
+                users = load_users()
+                if sel == ss_.user["username"]: return _msg("error", "You cannot delete your own account.")
+                gone = users.pop(sel)
+                if not _active_admins(users): return _msg("error", "At least one active Admin must remain.")
+                save_users(users); audit("user_delete", target=sel, role=gone["role"]); _msg("success", f"🗑️ User {sel} deleted.")
 
-        with t_users:
-            import pandas as pd
-            users_db = load_users()
-            st.markdown("#### 👥 Users & roles")
-            for c, (rn, rv) in zip(st.columns(3), ROLES.items()): c.markdown(f'<div class="rolecard"><div class="ic">{rv["icon"]}</div><b>{rn}</b><div class="s">{esc(rv["desc"])}</div></div>', unsafe_allow_html=True)
-            st.write("")
-            for kind, msg in ss_.pop("user_msgs", []): getattr(st, kind)(msg)
-            if ss_.get("shown_pw"):
-                su, sp = ss_.pop("shown_pw"); st.success(f"🔑 Temporary password for **{su}** (shown once - copy it now and share it securely). The user must change it at first sign-in."); st.code(sp, language=None)
-            if users_db:
-                st.dataframe(pd.DataFrame([{"username": u["username"], "name": u["name"], "role": f"{ROLES[u['role']]['icon']} {u['role']}", "modules": ", ".join(module_label(m) for m in u["modules"]) if u["role"] == ROLE_CONS else "all documents", "status": "✅ Active" if u["active"] else "⛔ Disabled", "password": "⏳ must change" if u["must_change"] else "set", "last sign-in": u.get("last_login") or "never"} for u in users_db.values()]), use_container_width=True, hide_index=True)
+            with t_users:
+                import pandas as pd
+                users_db = load_users()
+                st.markdown("#### 👥 Users & roles")
+                for c, (rn, rv) in zip(st.columns(3), ROLES.items()): c.markdown(f'<div class="rolecard"><div class="ic">{rv["icon"]}</div><b>{rn}</b><div class="s">{esc(rv["desc"])}</div></div>', unsafe_allow_html=True)
+                st.write("")
+                for kind, msg in ss_.pop("user_msgs", []): getattr(st, kind)(msg)
+                if ss_.get("shown_pw"):
+                    su, sp = ss_.pop("shown_pw"); st.success(f"🔑 Temporary password for **{su}** (shown once - copy it now and share it securely). The user must change it at first sign-in."); st.code(sp, language=None)
+                if users_db:
+                    st.dataframe(pd.DataFrame([{"username": u["username"], "name": u["name"], "role": f"{ROLES[u['role']]['icon']} {u['role']}", "modules": ", ".join(module_label(m) for m in u["modules"]) if u["role"] == ROLE_CONS else "all documents", "status": "✅ Active" if u["active"] else "⛔ Disabled", "password": "⏳ must change" if u["must_change"] else "set", "last sign-in": u.get("last_login") or "never"} for u in users_db.values()]), use_container_width=True, hide_index=True)
 
-            st.markdown("##### ➕ Add a person")
-            a1, a2 = st.columns(2); a1.text_input("Full name", key="nu_name"); a2.text_input("Username", key="nu_user", help="3-32 characters: lowercase letters, numbers, dot, dash or underscore.")
-            b1, b2 = st.columns(2); nrole = b1.selectbox("Role", list(ROLES), index=2, key="nu_role")
-            if nrole == ROLE_CONS: b2.multiselect("SAP modules this person may access", tax["sap_modules"], format_func=module_label, key="nu_mods")
-            else: b2.info("This role does not need modules.")
-            p1c, p2c = st.columns([3, 1]); p1c.text_input("Temporary password", key="nu_pw", help="Min. 8 characters with letters and numbers. The user must change it at first sign-in.")
-            p2c.write(""); p2c.button("🎲 Generate", on_click=lambda: ss_.__setitem__("nu_pw", gen_password()), use_container_width=True)
-            st.button("➕ Create user", type="primary", on_click=cb_create_user)
+                st.markdown("##### ➕ Add a person")
+                a1, a2 = st.columns(2); a1.text_input("Full name", key="nu_name"); a2.text_input("Username", key="nu_user", help="3-32 characters: lowercase letters, numbers, dot, dash or underscore.")
+                b1, b2 = st.columns(2); nrole = b1.selectbox("Role", list(ROLES), index=2, key="nu_role")
+                if nrole == ROLE_CONS: b2.multiselect("SAP modules this person may access", tax["sap_modules"], format_func=module_label, key="nu_mods")
+                else: b2.info("This role does not need modules.")
+                p1c, p2c = st.columns([3, 1]); p1c.text_input("Temporary password", key="nu_pw", help="Min. 8 characters with letters and numbers. The user must change it at first sign-in.")
+                p2c.write(""); p2c.button("🎲 Generate", on_click=lambda: ss_.__setitem__("nu_pw", gen_password()), use_container_width=True)
+                st.button("➕ Create user", type="primary", on_click=cb_create_user)
 
-            if users_db:
-                st.markdown("##### ✏️ Manage a person")
-                sel = st.selectbox("Select user", list(users_db), format_func=lambda k: f"{users_db[k]['name']} ({k})", key="mu_sel")
-                u = users_db[sel]; m1, m2 = st.columns(2); m1.text_input("Full name", u["name"], key=f"mu_name_{sel}")
-                mrole = m2.selectbox("Role", list(ROLES), index=list(ROLES).index(u["role"]), key=f"mu_role_{sel}")
-                st.multiselect("SAP modules (consultants only)", tax["sap_modules"], default=[m for m in u["modules"] if m in tax["sap_modules"]], format_func=module_label, key=f"mu_mods_{sel}", disabled=mrole != ROLE_CONS)
-                st.toggle("Account active", value=u["active"], key=f"mu_active_{sel}")
-                x1, x2, x3 = st.columns(3)
-                x1.button("💾 Save changes", on_click=cb_save_user, args=(sel,), use_container_width=True)
-                x2.button("🔄 Reset password", on_click=cb_reset_pw, args=(sel,), use_container_width=True)
-                x3.button("🗑️ Delete user", on_click=cb_delete_user, args=(sel,), use_container_width=True)
-                if u["role"] == ROLE_CONS and not u["modules"]: st.warning("This consultant has no modules assigned and cannot see any documents.")
+                if users_db:
+                    st.markdown("##### ✏️ Manage a person")
+                    sel = st.selectbox("Select user", list(users_db), format_func=lambda k: f"{users_db[k]['name']} ({k})", key="mu_sel")
+                    u = users_db[sel]; m1, m2 = st.columns(2); m1.text_input("Full name", u["name"], key=f"mu_name_{sel}")
+                    mrole = m2.selectbox("Role", list(ROLES), index=list(ROLES).index(u["role"]), key=f"mu_role_{sel}")
+                    st.multiselect("SAP modules (consultants only)", tax["sap_modules"], default=[m for m in u["modules"] if m in tax["sap_modules"]], format_func=module_label, key=f"mu_mods_{sel}", disabled=mrole != ROLE_CONS)
+                    st.toggle("Account active", value=u["active"], key=f"mu_active_{sel}")
+                    x1, x2, x3 = st.columns(3)
+                    x1.button("💾 Save changes", on_click=cb_save_user, args=(sel,), use_container_width=True)
+                    x2.button("🔄 Reset password", on_click=cb_reset_pw, args=(sel,), use_container_width=True)
+                    x3.button("🗑️ Delete user", on_click=cb_delete_user, args=(sel,), use_container_width=True)
+                    if u["role"] == ROLE_CONS and not u["modules"]: st.warning("This consultant has no modules assigned and cannot see any documents.")
 
-        with t_lib:
-            import pandas as pd
-            st.markdown("#### Library")
-            if ss_.library:
-                df = pd.DataFrame([{"id": d["id"], "title": d["meta"]["doc_title"], "file": d["name"], "client": d["meta"]["client"], "type": d["meta"]["doc_type"], "module": d["meta"]["sap_module"], "phase": d["meta"]["phase"], "status": d["status"], "restricted": "🔒" if d.get("restricted") else "", "added by": d["uploaded_by"]} for d in ss_.library])
-                st.dataframe(df, use_container_width=True, hide_index=True)
-                pick = st.selectbox("Manage a document", [d["id"] for d in ss_.library], format_func=lambda i: by_id[i]["meta"]["doc_title"])
-                d = by_id[pick]; a1, a2, a3 = st.columns(3)
-                if a1.button("Mark as current", use_container_width=True): d["status"], d["superseded_by"] = "Current", None; save_library(); audit("status", doc=d["name"], status="Current"); st.rerun()
-                if a2.button("Mark as superseded", use_container_width=True): d["status"] = "Superseded"; save_library(); audit("status", doc=d["name"], status="Superseded"); st.rerun()
-                if a3.button("Delete document", use_container_width=True):
-                    ss_.library = [x for x in ss_.library if x["id"] != pick]; ss_.selected.discard(pick); VS and VS.remove_doc(pick)
-                    if d.get("path"): Path(d["path"]).unlink(missing_ok=True)
-                    save_library(); audit("delete", doc=d["name"]); st.rerun()
-                v1, v2 = st.columns(2); restr = v1.checkbox("🔒 Restricted (Admin and SAP: MPO only)", value=d.get("restricted", False), key=f"restr_{pick}")
-                mods = tax["sap_modules"]; cur_mod = d["meta"]["sap_module"]; mod = v2.selectbox("🧩 SAP module (controls consultant access)", mods, index=mods.index(cur_mod) if cur_mod in mods else 0, key=f"mod_{pick}")
-                if st.button("💾 Save visibility"):
-                    d["restricted"], d["meta"]["sap_module"] = restr, mod; save_library(); audit("visibility", doc=d["name"], restricted=restr, module=mod); st.rerun()
+            with t_lib:
+                import pandas as pd
+                st.markdown("#### Library")
+                if ss_.library:
+                    df = pd.DataFrame([{"id": d["id"], "title": d["meta"]["doc_title"], "file": d["name"], "client": d["meta"]["client"], "type": d["meta"]["doc_type"], "module": d["meta"]["sap_module"], "phase": d["meta"]["phase"], "status": d["status"], "restricted": "🔒" if d.get("restricted") else "", "added by": d["uploaded_by"]} for d in ss_.library])
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+                    pick = st.selectbox("Manage a document", [d["id"] for d in ss_.library], format_func=lambda i: by_id[i]["meta"]["doc_title"])
+                    d = by_id[pick]; a1, a2, a3 = st.columns(3)
+                    if a1.button("Mark as current", use_container_width=True): d["status"], d["superseded_by"] = "Current", None; save_library(); audit("status", doc=d["name"], status="Current"); st.rerun()
+                    if a2.button("Mark as superseded", use_container_width=True): d["status"] = "Superseded"; save_library(); audit("status", doc=d["name"], status="Superseded"); st.rerun()
+                    if a3.button("Delete document", use_container_width=True):
+                        ss_.library = [x for x in ss_.library if x["id"] != pick]; ss_.selected.discard(pick); VS and VS.remove_doc(pick)
+                        if d.get("path"): Path(d["path"]).unlink(missing_ok=True)
+                        save_library(); audit("delete", doc=d["name"]); st.rerun()
+                    v1, v2 = st.columns(2); restr = v1.checkbox("🔒 Restricted (Admin and SAP: MPO only)", value=d.get("restricted", False), key=f"restr_{pick}")
+                    mods = tax["sap_modules"]; cur_mod = d["meta"]["sap_module"]; mod = v2.selectbox("🧩 SAP module (controls consultant access)", mods, index=mods.index(cur_mod) if cur_mod in mods else 0, key=f"mod_{pick}")
+                    if st.button("💾 Save visibility"):
+                        d["restricted"], d["meta"]["sap_module"] = restr, mod; save_library(); audit("visibility", doc=d["name"], restricted=restr, module=mod); st.rerun()
 
-        with t_vocab:
-            st.markdown("#### Controlled vocabulary")
-            st.caption("Client aliases map variants (TML, Tata Motors Ltd) to one record. The glossary expands TMC terms in searches.")
-            txt = st.text_area("taxonomy.json", json.dumps(tax, indent=2, ensure_ascii=False), height=300)
-            if st.button("Save vocabulary"):
-                try:
-                    t = json.loads(txt); assert all(k in t for k in DEFAULT_TAXONOMY); save_taxonomy(t); audit("taxonomy_update"); st.success("Saved.")
-                except Exception as e: st.error(f"Invalid vocabulary: {e}")
+            with t_vocab:
+                st.markdown("#### Controlled vocabulary")
+                st.caption("Client aliases map variants (TML, Tata Motors Ltd) to one record. The glossary expands TMC terms in searches.")
+                txt = st.text_area("taxonomy.json", json.dumps(tax, indent=2, ensure_ascii=False), height=300)
+                if st.button("Save vocabulary"):
+                    try:
+                        t = json.loads(txt); assert all(k in t for k in DEFAULT_TAXONOMY); save_taxonomy(t); audit("taxonomy_update"); st.success("Saved.")
+                    except Exception as e: st.error(f"Invalid vocabulary: {e}")
 
-        with t_store:
-            st.markdown("#### 💾 Storage & semantic search index")
-            sizes = {"📚 Library text (compressed)": dir_size(DATA / "library.json.gz") + dir_size(DATA / "library.json"), "📎 Original files": dir_size(DATA / "files"), "🧠 Vector index": dir_size(DATA / "vectors.sqlite"), "👥 Users, settings, audit": dir_size(DATA / "users.json") + dir_size(DATA / "settings.json") + dir_size(DATA / "audit.jsonl") + dir_size(DATA / "audit.1.jsonl")}
-            for c, (lab, val) in zip(st.columns(4), sizes.items()): c.metric(lab, human(val))
-            st.caption(f"Total used by Knowledge Lens: **{human(sum(sizes.values()))}** in `{DATA}`")
-            if VS:
-                stt = VS.stats(); st.success(f"🧠 Semantic search is ON ({EMBED_MODEL}). {stt['chunks']} chunks from {stt['docs']} of {len(ss_.library)} documents are indexed.")
-                missing = [d for d in ss_.library if not VS.has_doc(d["id"])]
-                if st.button(f"🔄 Index {len(missing)} document(s) not yet indexed" if missing else "🔄 Rebuild the whole index"):
-                    todo = missing or ss_.library; bar = st.progress(0.0)
-                    for n_, d in enumerate(todo, 1): VS.add_doc(d); bar.progress(n_ / len(todo))
-                    audit("reindex", docs=len(todo)); st.rerun()
-            else: st.warning("Semantic search is OFF, so the app uses keyword search only. Add `fastembed` to requirements.txt and reboot. " f"Reason: {VS_ERR}")
-            keep = st.toggle("Keep original files (needed for 'Download original')", value=load_settings().get("keep_originals", True), help="Turn off to save disk space. Extracted text and the search index are always kept.")
-            if keep != load_settings().get("keep_originals", True): save_settings({"keep_originals": keep}); audit("setting", keep_originals=keep)
-            st.caption("Streamlit Cloud erases this folder when the app restarts. Keep `.streamlit/kl_data/` out of GitHub (add it to .gitignore) and move to persistent storage before real use.")
+            with t_store:
+                st.markdown("#### 💾 Storage & semantic search index")
+                sizes = {"📚 Library text (compressed)": dir_size(DATA / "library.json.gz") + dir_size(DATA / "library.json"), "📎 Original files": dir_size(DATA / "files"), "🧠 Vector index": dir_size(DATA / "vectors.sqlite"), "👥 Users, settings, audit": dir_size(DATA / "users.json") + dir_size(DATA / "settings.json") + dir_size(DATA / "audit.jsonl") + dir_size(DATA / "audit.1.jsonl")}
+                for c, (lab, val) in zip(st.columns(4), sizes.items()): c.metric(lab, human(val))
+                st.caption(f"Total used by Knowledge Lens: **{human(sum(sizes.values()))}** in `{DATA}`")
+                if VS:
+                    stt = VS.stats(); st.success(f"🧠 Semantic search is ON ({EMBED_MODEL}). {stt['chunks']} chunks from {stt['docs']} of {len(ss_.library)} documents are indexed.")
+                    missing = [d for d in ss_.library if not VS.has_doc(d["id"])]
+                    if st.button(f"🔄 Index {len(missing)} document(s) not yet indexed" if missing else "🔄 Rebuild the whole index"):
+                        todo = missing or ss_.library; bar = st.progress(0.0)
+                        for n_, d in enumerate(todo, 1): VS.add_doc(d); bar.progress(n_ / len(todo))
+                        audit("reindex", docs=len(todo)); st.rerun()
+                else: st.warning("Semantic search is OFF, so the app uses keyword search only. Add `fastembed` to requirements.txt and reboot. " f"Reason: {VS_ERR}")
+                keep = st.toggle("Keep original files (needed for 'Download original')", value=load_settings().get("keep_originals", True), help="Turn off to save disk space. Extracted text and the search index are always kept.")
+                if keep != load_settings().get("keep_originals", True): save_settings({"keep_originals": keep}); audit("setting", keep_originals=keep)
+                st.caption("Streamlit Cloud erases this folder when the app restarts. Keep `.streamlit/kl_data/` out of GitHub (add it to .gitignore) and move to persistent storage before real use.")
 
-        with t_audit:
-            import pandas as pd
-            st.markdown("#### Audit log")
-            log = read_audit()
-            if log:
-                ldf = pd.DataFrame(log).tail(300).iloc[::-1]
-                st.dataframe(ldf, use_container_width=True, hide_index=True)
-                st.download_button("Download audit log (CSV)", pd.DataFrame(log).to_csv(index=False), file_name="audit_log.csv")
+            with t_audit:
+                import pandas as pd
+                st.markdown("#### Audit log")
+                log = read_audit()
+                if log:
+                    ldf = pd.DataFrame(log).tail(300).iloc[::-1]
+                    st.dataframe(ldf, use_container_width=True, hide_index=True)
+                    st.download_button("Download audit log (CSV)", pd.DataFrame(log).to_csv(index=False), file_name="audit_log.csv")
 
 # ============================================================================
 # TAB 3: PILOT METRICS
 # ============================================================================
-with tabs[2] if ss_.user["admin"] else st.container():
-    if not ss_.user["admin"]: st.info("🔒 Pilot metrics available to Admin role only.")
-    else:
-        import pandas as pd
-        import altair as alt
-        PAL = ["#0F6B45", "#1FA67A", "#F2A93B", "#3B82F6", "#E8590C", "#8E5BD0"]
-        log = read_audit(); ldf = pd.DataFrame(log) if log else pd.DataFrame(columns=["ts", "user", "action"])
-        asks = [r for r in log if r["action"] == "ask"]; fb = [r for r in log if r["action"] == "feedback"]
-        n_search = sum(r["action"] == "search" for r in log); n_rep = sum(r["action"] == "report" for r in log)
-        n_cur = sum(d["status"] == "Current" for d in ss_.library); n_users = ldf["user"].nunique() if len(ldf) else 0
-        avg_t = f"{sum(r['seconds'] for r in asks) / len(asks):.1f}s" if asks else "-"
-        helpful = f"{100 * sum(r['rating'] == 1 for r in fb) / len(fb):.0f}%" if fb else "-"
+if len(tabs) > 2:
+    with tabs[2]:
+        if not ss_.user["admin"]: st.info("🔒 Pilot metrics available to Admin role only.")
+        else:
+            import pandas as pd
+            import altair as alt
+            PAL = ["#0F6B45", "#1FA67A", "#F2A93B", "#3B82F6", "#E8590C", "#8E5BD0"]
+            log = read_audit(); ldf = pd.DataFrame(log) if log else pd.DataFrame(columns=["ts", "user", "action"])
+            asks = [r for r in log if r["action"] == "ask"]; fb = [r for r in log if r["action"] == "feedback"]
+            n_search = sum(r["action"] == "search" for r in log); n_rep = sum(r["action"] == "report" for r in log)
+            n_cur = sum(d["status"] == "Current" for d in ss_.library); n_users = ldf["user"].nunique() if len(ldf) else 0
+            avg_t = f"{sum(r['seconds'] for r in asks) / len(asks):.1f}s" if asks else "-"
+            helpful = f"{100 * sum(r['rating'] == 1 for r in fb) / len(fb):.0f}%" if fb else "-"
 
-        st.markdown("#### 📊 Pilot dashboard")
-        kpis = [("📚", "Documents", len(ss_.library), f"{n_cur} current • {len(ss_.library) - n_cur} superseded", "#0F6B45", "#1FA67A"),
-                ("💬", "Questions asked", len(asks), f"{n_users} active user(s)", "#2563EB", "#3B82F6"),
-                ("🔍", "Searches", n_search, "library searches run", "#7C3AED", "#A78BFA"),
-                ("⏱️", "Avg. answer time", avg_t, "manual baseline ≈ 12 min", "#D97706", "#F2A93B"),
-                ("👍", "Helpful answers", helpful, f"{len(fb)} rating(s) given", "#059669", "#34D399"),
-                ("📝", "Reports generated", n_rep, "Word • PPT • Excel • PDF", "#DC2626", "#F97316")]
-        for c, (ic, lab, val, sub, c1, c2) in zip(st.columns(6), kpis):
-            c.markdown(f'<div class="kpi" style="background:linear-gradient(135deg,{c1},{c2})"><div class="ic">{ic}</div><div class="v">{val}</div><div class="l">{lab}</div><div class="s">{sub}</div></div>', unsafe_allow_html=True)
+            st.markdown("#### 📊 Pilot dashboard")
+            kpis = [("📚", "Documents", len(ss_.library), f"{n_cur} current • {len(ss_.library) - n_cur} superseded", "#0F6B45", "#1FA67A"),
+                    ("💬", "Questions asked", len(asks), f"{n_users} active user(s)", "#2563EB", "#3B82F6"),
+                    ("🔍", "Searches", n_search, "library searches run", "#7C3AED", "#A78BFA"),
+                    ("⏱️", "Avg. answer time", avg_t, "manual baseline ≈ 12 min", "#D97706", "#F2A93B"),
+                    ("👍", "Helpful answers", helpful, f"{len(fb)} rating(s) given", "#059669", "#34D399"),
+                    ("📝", "Reports generated", n_rep, "Word • PPT • Excel • PDF", "#DC2626", "#F97316")]
+            for c, (ic, lab, val, sub, c1, c2) in zip(st.columns(6), kpis):
+                c.markdown(f'<div class="kpi" style="background:linear-gradient(135deg,{c1},{c2})"><div class="ic">{ic}</div><div class="v">{val}</div><div class="l">{lab}</div><div class="s">{sub}</div></div>', unsafe_allow_html=True)
 
-        def donut(rows, colors, title):
-            st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
-            df_ = pd.DataFrame(rows, columns=["label", "count"]); df_ = df_[df_["count"] > 0]
-            if df_.empty: st.caption("No data yet."); return
-            st.altair_chart(alt.Chart(df_).mark_arc(innerRadius=55, outerRadius=100).encode(theta="count:Q", color=alt.Color("label:N", scale=alt.Scale(domain=list(df_["label"]), range=colors[:len(df_)]), legend=alt.Legend(orient="bottom", title=None)), tooltip=["label", "count"]).properties(height=260), use_container_width=True)
+            def donut(rows, colors, title):
+                st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
+                df_ = pd.DataFrame(rows, columns=["label", "count"]); df_ = df_[df_["count"] > 0]
+                if df_.empty: st.caption("No data yet."); return
+                st.altair_chart(alt.Chart(df_).mark_arc(innerRadius=55, outerRadius=100).encode(theta="count:Q", color=alt.Color("label:N", scale=alt.Scale(domain=list(df_["label"]), range=colors[:len(df_)]), legend=alt.Legend(orient="bottom", title=None)), tooltip=["label", "count"]).properties(height=260), use_container_width=True)
 
-        def hbar(counter, title, color):
-            st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
-            if not counter: st.caption("No data yet."); return
-            df_ = pd.DataFrame(counter.most_common(8), columns=["label", "count"])
-            st.altair_chart(alt.Chart(df_).mark_bar(cornerRadiusEnd=5, color=color).encode(x=alt.X("count:Q", title=None, axis=alt.Axis(tickMinStep=1)), y=alt.Y("label:N", sort="-x", title=None), tooltip=["label", "count"]).properties(height=260), use_container_width=True)
+            def hbar(counter, title, color):
+                st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
+                if not counter: st.caption("No data yet."); return
+                df_ = pd.DataFrame(counter.most_common(8), columns=["label", "count"])
+                st.altair_chart(alt.Chart(df_).mark_bar(cornerRadiusEnd=5, color=color).encode(x=alt.X("count:Q", title=None, axis=alt.Axis(tickMinStep=1)), y=alt.Y("label:N", sort="-x", title=None), tooltip=["label", "count"]).properties(height=260), use_container_width=True)
 
-        r1a, r1b = st.columns([3, 2])
-        with r1a:
-            st.markdown('<div class="chart-title">📈 Activity over time</div>', unsafe_allow_html=True)
-            ACTS = ["search", "ask", "summary", "report", "upload"]; act = ldf[ldf["action"].isin(ACTS)].copy() if len(ldf) else ldf
-            if len(act):
-                act["day"] = pd.to_datetime(act["ts"]).dt.floor("D"); grp = act.groupby(["day", "action"]).size().reset_index(name="count")
-                st.altair_chart(alt.Chart(grp).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(x=alt.X("day:T", title=None, axis=alt.Axis(format="%d %b")), y=alt.Y("count:Q", title=None, axis=alt.Axis(tickMinStep=1)), color=alt.Color("action:N", scale=alt.Scale(domain=ACTS, range=PAL[:5]), legend=alt.Legend(orient="bottom", title=None)), tooltip=["day:T", "action", "count"]).properties(height=260), use_container_width=True)
-            else: st.caption("No activity yet.")
-        with r1b:
-            up = sum(r["rating"] == 1 for r in fb); down = sum(r["rating"] == -1 for r in fb)
-            donut([("👍 Helpful", up), ("👎 Not helpful", down), ("Not rated", max(len(asks) - len(fb), 0))], ["#1FA67A", "#E8590C", "#C8CDD6"], "🎯 Answer feedback")
+            r1a, r1b = st.columns([3, 2])
+            with r1a:
+                st.markdown('<div class="chart-title">📈 Activity over time</div>', unsafe_allow_html=True)
+                ACTS = ["search", "ask", "summary", "report", "upload"]; act = ldf[ldf["action"].isin(ACTS)].copy() if len(ldf) else ldf
+                if len(act):
+                    act["day"] = pd.to_datetime(act["ts"]).dt.floor("D"); grp = act.groupby(["day", "action"]).size().reset_index(name="count")
+                    st.altair_chart(alt.Chart(grp).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(x=alt.X("day:T", title=None, axis=alt.Axis(format="%d %b")), y=alt.Y("count:Q", title=None, axis=alt.Axis(tickMinStep=1)), color=alt.Color("action:N", scale=alt.Scale(domain=ACTS, range=PAL[:5]), legend=alt.Legend(orient="bottom", title=None)), tooltip=["day:T", "action", "count"]).properties(height=260), use_container_width=True)
+                else: st.caption("No activity yet.")
+            with r1b:
+                up = sum(r["rating"] == 1 for r in fb); down = sum(r["rating"] == -1 for r in fb)
+                donut([("👍 Helpful", up), ("👎 Not helpful", down), ("Not rated", max(len(asks) - len(fb), 0))], ["#1FA67A", "#E8590C", "#C8CDD6"], "🎯 Answer feedback")
 
-        r2a, r2b, r2c = st.columns(3)
-        with r2a: hbar(Counter(d["meta"]["doc_type"] for d in ss_.library), "📑 Documents by type", PAL[0])
-        with r2b: hbar(Counter(d["meta"]["client"] for d in ss_.library), "🏢 Documents by client", PAL[3])
-        with r2c: donut(list(Counter(d["meta"]["sap_module"] for d in ss_.library).items()), PAL, "🧩 Documents by SAP module")
+            r2a, r2b, r2c = st.columns(3)
+            with r2a: hbar(Counter(d["meta"]["doc_type"] for d in ss_.library), "📑 Documents by type", PAL[0])
+            with r2b: hbar(Counter(d["meta"]["client"] for d in ss_.library), "🏢 Documents by client", PAL[3])
+            with r2c: donut(list(Counter(d["meta"]["sap_module"] for d in ss_.library).items()), PAL, "🧩 Documents by SAP module")
 
-        r3a, r3b = st.columns([2, 3])
-        with r3a: hbar(Counter(r["query"].lower() for r in log if r["action"] == "search"), "🔎 Top search terms", PAL[2])
-        with r3b:
-            st.markdown('<div class="chart-title">⏱️ Answer time per question (seconds)</div>', unsafe_allow_html=True)
-            if asks:
-                tdf = pd.DataFrame({"question": range(1, len(asks) + 1), "seconds": [r["seconds"] for r in asks], "text": [r["question"][:60] for r in asks]})
-                ch = alt.Chart(tdf).mark_area(line={"color": PAL[4]}, color=alt.Gradient(gradient="linear", stops=[alt.GradientStop(color="#F9C9A8", offset=0), alt.GradientStop(color="#FFF3EA", offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(x=alt.X("question:O", title="Question #"), y=alt.Y("seconds:Q", title=None), tooltip=["question", "seconds", "text"]).properties(height=260)
-                st.altair_chart(ch + ch.mark_point(color=PAL[4], filled=True, size=70), use_container_width=True)
-            else: st.caption("Ask a question in the Workspace to see timings.")
+            r3a, r3b = st.columns([2, 3])
+            with r3a: hbar(Counter(r["query"].lower() for r in log if r["action"] == "search"), "🔎 Top search terms", PAL[2])
+            with r3b:
+                st.markdown('<div class="chart-title">⏱️ Answer time per question (seconds)</div>', unsafe_allow_html=True)
+                if asks:
+                    tdf = pd.DataFrame({"question": range(1, len(asks) + 1), "seconds": [r["seconds"] for r in asks], "text": [r["question"][:60] for r in asks]})
+                    ch = alt.Chart(tdf).mark_area(line={"color": PAL[4]}, color=alt.Gradient(gradient="linear", stops=[alt.GradientStop(color="#F9C9A8", offset=0), alt.GradientStop(color="#FFF3EA", offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(x=alt.X("question:O", title="Question #"), y=alt.Y("seconds:Q", title=None), tooltip=["question", "seconds", "text"]).properties(height=260)
+                    st.altair_chart(ch + ch.mark_point(color=PAL[4], filled=True, size=70), use_container_width=True)
+                else: st.caption("Ask a question in the Workspace to see timings.")
 
 # ============================================================================
-# TAB 4: PRODUCTION SYSTEM TECH (Moved from Workspace Info)
+# TAB 4, 5, 6, 7: INFO PAGES
 # ============================================================================
-with tabs[3] if ss_.user["admin"] else tabs[1]:
+idx = 3 if ss_.user["admin"] else 1
+
+with tabs[idx]: # Production System Tech
     st.markdown("### ⚙️ Production System Technology")
     st.info("This app is built for enterprise-grade deployment, prioritising security, data privacy, and robust performance.")
-    
     st.markdown("""
     #### 1. Core Architecture & Pipeline
     - **Implementation Pipeline:** Ingest → Tag → Resolve → Ask → Summarize.
@@ -1149,10 +1148,7 @@ with tabs[3] if ss_.user["admin"] else tabs[1]:
     - **Precision@3:** ≥ 90% (The correct answer is in the top 3 citations 9 out of 10 times).
     """)
 
-# ============================================================================
-# TAB 5: SYSTEM FEATURES
-# ============================================================================
-with tabs[4] if ss_.user["admin"] else tabs[2]:
+with tabs[idx+1]: # System Features
     st.markdown("### 💡 System Features")
     st.markdown("""
     **Knowledge Lens** is an advanced, AI-driven document workspace designed specifically for SAP consultancy. 
@@ -1173,12 +1169,9 @@ with tabs[4] if ss_.user["admin"] else tabs[2]:
     #### 🧠 Hybrid Search
     We use a combination of **keyword matching** (BM25) and **semantic vector search** (embeddings), fused via Reciprocal Rank Fusion (RRF). This means you find documents even if you don't use the exact same words as the author.
     """)
-# ============================================================================
-# TAB 6: HOW TO USE
-# ============================================================================
-with tabs[5] if ss_.user["admin"] else tabs[3]:
+
+with tabs[idx+2]: # How to Use
     st.markdown("### 📖 How to Use Knowledge Lens")
-    
     st.markdown("""
     #### Step 1: Search & Select
     - Use the pill-shaped search bar on the left to find project documents.
@@ -1203,10 +1196,7 @@ with tabs[5] if ss_.user["admin"] else tabs[3]:
     - Confirm they are sanitized, and upload. The AI will auto-tag them for you.
     """)
 
-# ============================================================================
-# TAB 7: CONTACT US
-# ============================================================================
-with tabs[6] if ss_.user["admin"] else tabs[4]:
+with tabs[idx+3]: # Contact Us
     st.markdown("### 📞 Contact Us")
     st.info("For support, access requests, or feedback regarding Knowledge Lens, please reach out to the TMC AI team.")
     
