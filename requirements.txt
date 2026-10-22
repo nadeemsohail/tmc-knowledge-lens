@@ -1,4 +1,6 @@
 streamlit
 openai
 pypdf
+python-docx
+python-pptx
 langchain-text-splitters
