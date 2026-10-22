@@ -1173,34 +1173,35 @@ with tabs[4] if ss_.user["admin"] else tabs[2]:
     #### 🧠 Hybrid Search
     We use a combination of **keyword matching** (BM25) and **semantic vector search** (embeddings), fused via Reciprocal Rank Fusion (RRF). This means you find documents even if you don't use the exact same words as the author.
     """)
-
 # ============================================================================
 # TAB 6: HOW TO USE
 # ============================================================================
 with tabs[5] if ss_.user["admin"] else tabs[3]:
     st.markdown("### 📖 How to Use Knowledge Lens")
     
-    st.markdown("#### Step 1: Search & Select")
+    st.markdown("""
+    #### Step 1: Search & Select
     - Use the pill-shaped search bar on the left to find project documents.
     - Use the **Filters** (Client, SAP Module, Type) to narrow down results.
     - **Tick the checkboxes** next to the documents you want to analyze.
 
-    st.markdown("#### Step 2: Ask & Summarize")
+    #### Step 2: Ask & Summarize
     - Once documents are selected, the **Centre Panel** unlocks.
     - Click **✨ Summarize selected** for a quick overview.
     - Use the **Quick Action Buttons** (Key Decisions, Deliverables, Risks, Timeline) to instantly ask specific questions.
     - Or type your own question in the chat box at the bottom.
 
-    st.markdown("#### Step 3: Generate Reports")
+    #### Step 3: Generate Reports
     - Go to the **Right Panel (Studio)**.
     - Choose a report type (e.g., "Risk & Issue register").
     - Click **🚀 Generate report**.
     - Download the finished file in your preferred format (Word, PDF, etc.).
 
-    st.markdown("#### Step 4: Upload Documents (Admin/MPO Only)")
+    #### Step 4: Upload Documents (Admin/MPO Only)
     - Open the **Sources** panel on the left.
     - Click **➕ Add documents to the library**.
     - Confirm they are sanitized, and upload. The AI will auto-tag them for you.
+    """)
 
 # ============================================================================
 # TAB 7: CONTACT US
