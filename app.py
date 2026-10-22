@@ -1,5 +1,9 @@
 """
 TMC Knowledge Lens - search-first, permission-aware document workspace.
+
+Flow:  Search the library  ->  matching documents appear in Sources (left)
+       ->  tick the ones you want  ->  summarise / ask cited questions (centre)
+       ->  generate a report as Word, PowerPoint, Excel or PDF (right).
 """
 import streamlit as st
 from openai import OpenAI
@@ -15,7 +19,8 @@ from xml.sax.saxutils import escape as xml_escape
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
-import json, io, re, math, hashlib, hmac, secrets, time, difflib, os, uuid, html
+import json, io, re, math, hashlib, hmac, secrets, time, difflib, os, uuid, html, gzip, sqlite3, threading
+import numpy as np
 
 st.set_page_config(page_title="TMC Knowledge Lens", page_icon="🔍", layout="wide")
 
@@ -23,7 +28,7 @@ st.set_page_config(page_title="TMC Knowledge Lens", page_icon="🔍", layout="wi
 # Constants and storage
 # ----------------------------------------------------------------------------
 MODEL = st.secrets.get("MODEL", "openai/gpt-oss-120b")
-DATA = Path(os.environ.get("KL_DATA_DIR", "kl_data"))   # NOTE: use a persistent volume / DB in production
+DATA = Path(os.environ.get("KL_DATA_DIR", ".streamlit/kl_data"))   # library, users, vectors. Add to .gitignore! Wiped on Streamlit Cloud restarts.
 (DATA / "files").mkdir(parents=True, exist_ok=True)
 ROLE_ADMIN, ROLE_MPO, ROLE_CONS = "Admin", "SAP: MPO", "SAP: Consultant"
 ROLES = {
@@ -68,7 +73,7 @@ REPORT_TYPES = {
 }
 
 # ----------------------------------------------------------------------------
-# Styling
+# Styling - search-first workspace, deliberately not a NotebookLM copy
 # ----------------------------------------------------------------------------
 st.markdown("""
 <style>
@@ -140,42 +145,54 @@ def parse_json(raw):
 # ----------------------------------------------------------------------------
 def load_taxonomy():
     p = DATA / "taxonomy.json"
-    try:
-        return json.loads(p.read_text("utf-8")) if p.exists() else DEFAULT_TAXONOMY
-    except Exception:
-        return DEFAULT_TAXONOMY
+    return json.loads(p.read_text("utf-8")) if p.exists() else DEFAULT_TAXONOMY
 
 
 def save_taxonomy(t):
-    try:
-        (DATA / "taxonomy.json").write_text(json.dumps(t, indent=2, ensure_ascii=False), "utf-8")
-    except Exception:
-        pass
+    (DATA / "taxonomy.json").write_text(json.dumps(t, indent=2, ensure_ascii=False), "utf-8")
 
 
 def load_library():
-    p = DATA / "library.json"
-    try:
-        return json.loads(p.read_text("utf-8")) if p.exists() else []
-    except Exception:
-        return []
+    gz, p = DATA / "library.json.gz", DATA / "library.json"
+    if gz.exists():
+        return json.loads(gzip.decompress(gz.read_bytes()).decode("utf-8"))
+    return json.loads(p.read_text("utf-8")) if p.exists() else []
 
 
 def save_library():
-    try:
-        (DATA / "library.json").write_text(json.dumps(st.session_state.library, ensure_ascii=False), "utf-8")
-    except Exception:
-        pass
+    raw = json.dumps(st.session_state.library, ensure_ascii=False).encode("utf-8")
+    (DATA / "library.json.gz").write_bytes(gzip.compress(raw, 6))      # ~4x smaller than plain JSON
+    (DATA / "library.json").unlink(missing_ok=True)
+
+
+def load_settings():
+    p = DATA / "settings.json"
+    return json.loads(p.read_text("utf-8")) if p.exists() else {"keep_originals": True}
+
+
+def save_settings(d):
+    (DATA / "settings.json").write_text(json.dumps(d), "utf-8")
+
+
+def dir_size(p):
+    p = Path(p)
+    if p.is_file():
+        return p.stat().st_size
+    return sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) if p.exists() else 0
+
+
+def human(n):
+    for u in ("B", "KB", "MB", "GB"):
+        if n < 1024 or u == "GB":
+            return f"{n:.0f} {u}" if u == "B" else f"{n:.1f} {u}"
+        n /= 1024
 
 
 def audit(action, **detail):
     u = st.session_state.get("user") or {"name": "anonymous"}
     row = {"ts": datetime.now().isoformat(timespec="seconds"), "user": u.get("username", u["name"]), "action": action, **detail}
-    try:
-        with open(DATA / "audit.jsonl", "a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
+    with open(DATA / "audit.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def read_audit():
@@ -183,19 +200,16 @@ def read_audit():
     if not p.exists():
         return []
     out = []
-    try:
-        for line in p.read_text("utf-8").splitlines():
-            try:
-                out.append(json.loads(line))
-            except Exception:
-                pass
-    except Exception:
-        pass
+    for line in p.read_text("utf-8").splitlines():
+        try:
+            out.append(json.loads(line))
+        except Exception:
+            pass
     return out
 
 
 # ----------------------------------------------------------------------------
-# Text extraction
+# Text extraction (returns pages, author, unit-name)
 # ----------------------------------------------------------------------------
 def chunk_text(text, size=2500):
     pages, cur = [], ""
@@ -249,8 +263,94 @@ def extract_txt(b):
 
 EXTRACTORS = {"pdf": extract_pdf, "docx": extract_docx, "pptx": extract_pptx, "xlsx": extract_xlsx, "txt": extract_txt, "md": extract_txt}
 
+# <<VECTORS>>
 # ----------------------------------------------------------------------------
-# Retrieval
+# Small vector database: SQLite file + numpy. Vectors are stored as float16
+# (768 bytes per chunk), so 10,000 chunks (~800 pages) take about 8 MB.
+# ----------------------------------------------------------------------------
+EMBED_MODEL = "BAAI/bge-small-en-v1.5"      # 384 dimensions, ~70 MB ONNX model, runs on CPU
+CHUNK_CHARS, CHUNK_OVERLAP = 1200, 150
+VEC_MIN = 0.55                              # minimum cosine similarity for a semantic-only match (tune on real documents)
+
+
+def split_windows(n, size=CHUNK_CHARS, overlap=CHUNK_OVERLAP):
+    starts, i = [], 0
+    while i < max(n, 1):
+        starts.append(i)
+        i += size - overlap
+    if len(starts) > 1 and n - starts[-1] < 100:     # drop a tiny tail
+        starts.pop()
+    return starts
+
+
+class VectorStore:
+    def __init__(self, path, embed_fn):
+        self.path, self.embed, self.lock = str(path), embed_fn, threading.Lock()
+        self.db = sqlite3.connect(self.path, check_same_thread=False)
+        self.db.execute("CREATE TABLE IF NOT EXISTS chunks(doc_id TEXT, page INT, start INT, vec BLOB)")
+        self.db.execute("CREATE INDEX IF NOT EXISTS ix_doc ON chunks(doc_id)")
+        self.db.commit()
+        self._dirty, self.mat, self.meta = True, None, []
+
+    def _load(self):
+        rows = self.db.execute("SELECT doc_id, page, start, vec FROM chunks").fetchall()
+        self.meta = [(r[0], r[1], r[2]) for r in rows]
+        if rows:
+            self.mat = np.frombuffer(b"".join(r[3] for r in rows), dtype=np.float16).reshape(len(rows), -1)
+        else:
+            self.mat = np.zeros((0, 1), np.float16)
+        self.doc_arr = np.array([m[0] for m in self.meta])
+        self._dirty = False
+
+    def has_doc(self, doc_id):
+        return self.db.execute("SELECT 1 FROM chunks WHERE doc_id=? LIMIT 1", (doc_id,)).fetchone() is not None
+
+    def add_doc(self, doc):
+        items = [(pi, st_, text[st_:st_ + CHUNK_CHARS]) for pi, text in enumerate(doc["pages"], 1)
+                 if text.strip() for st_ in split_windows(len(text))]
+        if not items:
+            return 0
+        vecs = self.embed([t for _, _, t in items], False)
+        with self.lock:
+            self.db.execute("DELETE FROM chunks WHERE doc_id=?", (doc["id"],))
+            self.db.executemany("INSERT INTO chunks VALUES (?,?,?,?)",
+                                [(doc["id"], p, st_, v.astype(np.float16).tobytes()) for (p, st_, _), v in zip(items, vecs)])
+            self.db.commit()
+            self._dirty = True
+        return len(items)
+
+    def remove_doc(self, doc_id):
+        with self.lock:
+            self.db.execute("DELETE FROM chunks WHERE doc_id=?", (doc_id,))
+            self.db.commit()
+            self._dirty = True
+
+    def search(self, query, doc_ids, k=60):
+        """Return [(doc_id, page, start, cosine)] best-first, restricted to doc_ids."""
+        with self.lock:
+            if self._dirty:
+                self._load()
+        if not len(self.meta):
+            return []
+        idx = np.where(np.isin(self.doc_arr, list(doc_ids)))[0]
+        if not len(idx):
+            return []
+        q = self.embed([query], True)[0]
+        sims = self.mat[idx].astype(np.float32) @ q
+        top = np.argsort(-sims)[:k]
+        return [(*self.meta[idx[i]], float(sims[i])) for i in top]
+
+    def stats(self):
+        with self.lock:
+            if self._dirty:
+                self._load()
+        return {"chunks": len(self.meta), "docs": len(set(m[0] for m in self.meta)), "bytes": dir_size(self.path)}
+# <<END VECTORS>>
+
+# <<RETRIEVAL>>
+# ----------------------------------------------------------------------------
+# Retrieval (BM25 + controlled-vocabulary query expansion). Swap for embeddings
+# + a vector DB (pgvector / Azure AI Search) when the library grows.
 # ----------------------------------------------------------------------------
 STOP = set("the a an and or of to in for on with is are was were be by as at from that this it its".split())
 
@@ -304,7 +404,7 @@ def make_snippet(text, qtokens, width=240):
     return ("…" if start else "") + flat[start:start + width] + "…"
 
 
-def search_docs(query, docs, tax):
+def search_docs(query, docs, tax, vs=None):
     qt = expand_query(query, tax)
     chunks = []
     for d in docs:
@@ -312,34 +412,68 @@ def search_docs(query, docs, tax):
         chunks += [(d["id"], i + 1, p) for i, p in enumerate(d["pages"]) if p.strip()]
     scores = bm25(qt, [c[2] for c in chunks])
     agg = {}
-    for (did, page, text), s in zip(chunks, scores):
-        if s <= 0:
+    for (did, page, text), s_ in zip(chunks, scores):
+        if s_ <= 0:
             continue
         a = agg.setdefault(did, {"score": 0.0, "page": None, "ps": 0.0, "text": ""})
-        a["score"] = max(a["score"], s)
-        if page > 0 and s > a["ps"]:
-            a.update(ps=s, page=page, text=text)
+        a["score"] = max(a["score"], s_)
+        if page > 0 and s_ > a["ps"]:
+            a.update(ps=s_, page=page, text=text)
     top = max([a["score"] for a in agg.values()], default=1.0)
-    items = [{"id": k, "rel": int(100 * a["score"] / top), "page": a["page"],
-              "snippet": make_snippet(a["text"], qt) if a["text"] else ""} for k, a in agg.items()]
+    kw = {k: a["score"] / top for k, a in agg.items()}
+
+    vec = {}                                            # semantic signal: best chunk per document
+    if vs:
+        dmap = {d["id"]: d for d in docs}
+        for did, page, start, cos in vs.search(query, set(dmap)):
+            if cos >= VEC_MIN and (did not in vec or cos > vec[did][0]):
+                vec[did] = (cos, page, dmap[did]["pages"][page - 1][start:start + CHUNK_CHARS])
+    vtop = max([v[0] for v in vec.values()], default=VEC_MIN)
+    sem = {k: (v[0] - VEC_MIN) / max(vtop - VEC_MIN, 1e-6) * 0.7 + 0.3 for k, v in vec.items()}   # 0.3..1.0
+
+    final = {k: (0.5 * kw.get(k, 0) + 0.5 * sem.get(k, 0)) if vs else kw.get(k, 0) for k in set(kw) | set(sem)}
+    ftop = max(final.values(), default=1.0) or 1.0
+    items = []
+    for k, f in final.items():
+        a = agg.get(k)
+        if a and a["text"]:
+            page, snip = a["page"], make_snippet(a["text"], qt)
+        elif k in vec:
+            page, snip = vec[k][1], make_snippet(vec[k][2], qt)
+        else:
+            page, snip = None, ""
+        items.append({"id": k, "rel": int(100 * f / ftop), "page": page, "snippet": snip})
     return sorted(items, key=lambda x: -x["rel"])
 
 
-def retrieve(query, docs, tax, k=8):
+def retrieve(query, docs, tax, k=8, vs=None):
     chunks = [(d, i + 1, p) for d in docs for i, p in enumerate(d["pages"]) if p.strip()]
     if not chunks:
         return []
     sc = bm25(expand_query(query, tax), [c[2] for c in chunks])
     order = sorted(range(len(chunks)), key=lambda i: -sc[i])
-    pick = [i for i in order[:k] if sc[i] > 0]
+    rrf = Counter()                                     # reciprocal-rank fusion of keyword and semantic rankings
+    for r, i in enumerate([i for i in order if sc[i] > 0]):
+        rrf[i] += 1 / (60 + r)
+    if vs:
+        pos = {(c[0]["id"], c[1]): i for i, c in enumerate(chunks)}
+        seen = []
+        for did, page, start, cos in vs.search(query, {d["id"] for d in docs}, k=80):
+            i = pos.get((did, page))
+            if i is not None and i not in seen:
+                seen.append(i)
+        for r, i in enumerate(seen):
+            rrf[i] += 1 / (60 + r)
+    pick = [i for i, _ in rrf.most_common(k)]
     have = {chunks[i][0]["id"] for i in pick}
-    for d in docs:
+    for d in docs:                      # make sure every selected document is represented
         if d["id"] not in have:
             cand = [i for i in order if chunks[i][0]["id"] == d["id"]]
             if cand:
                 pick.append(cand[0])
     return [{"doc_id": chunks[i][0]["id"], "doc_title": chunks[i][0]["meta"]["doc_title"],
              "unit": chunks[i][0]["unit"], "page": chunks[i][1], "text": chunks[i][2]} for i in pick]
+# <<END RETRIEVAL>>
 
 
 def sample_text(d, budget):
@@ -435,20 +569,25 @@ def ingest(file, restricted, tax):
         else:
             doc["status"], doc["superseded_by"] = "Superseded", other["id"]
             note = f" A newer version already exists (“{other['meta']['doc_title']}”)."
-    try:
+    doc["path"] = ""
+    if load_settings().get("keep_originals", True):
         path = DATA / "files" / f"{doc['id']}_{re.sub(r'[^A-Za-z0-9._-]', '_', file.name)}"
         path.write_bytes(raw)
         doc["path"] = str(path)
-    except Exception:
-        doc["path"] = ""
     st.session_state.library.append(doc)
     save_library()
+    if VS:
+        try:
+            VS.add_doc(doc)
+        except Exception as e:
+            note += f" (semantic indexing failed: {e})"
     audit("upload", doc=doc["name"], restricted=doc["restricted"])
     return "success", f"Added “{meta['doc_title']}” ({meta['doc_type']}, {meta['client']}).{note}"
 
 
+# <<EXPORTS>>
 # ----------------------------------------------------------------------------
-# Exports
+# Report export: Word, PowerPoint, Excel, PDF
 # ----------------------------------------------------------------------------
 def norm_report(r, fallback):
     secs = [{"heading": str(s.get("heading", "")), "bullets": [str(b) for b in s.get("bullets", [])]}
@@ -561,25 +700,26 @@ def build_xlsx(r):
 
 def build_pdf(r):
     ss = getSampleStyleSheet()
-    esc_ = lambda s: xml_escape(s).encode("latin-1", "replace").decode("latin-1")
-    story = [Paragraph(esc_(r["title"]), ss["Title"]),
+    esc = lambda s: xml_escape(s).encode("latin-1", "replace").decode("latin-1")
+    story = [Paragraph(esc(r["title"]), ss["Title"]),
              Paragraph(f"Generated by TMC Knowledge Lens • {datetime.now():%d %b %Y}", ss["Italic"]), Spacer(1, 12),
-             Paragraph("Executive summary", ss["Heading2"]), Paragraph(esc_(r["executive_summary"]), ss["BodyText"])]
+             Paragraph("Executive summary", ss["Heading2"]), Paragraph(esc(r["executive_summary"]), ss["BodyText"])]
     for s in r["sections"]:
-        story.append(Paragraph(esc_(s["heading"]), ss["Heading2"]))
-        story += [Paragraph("• " + esc_(b), ss["BodyText"]) for b in s["bullets"]]
+        story.append(Paragraph(esc(s["heading"]), ss["Heading2"]))
+        story += [Paragraph("• " + esc(b), ss["BodyText"]) for b in s["bullets"]]
     if r["table"]:
-        data = [[Paragraph(f"<b>{esc_(c)}</b>", ss["BodyText"]) for c in r["table"]["columns"]]]
-        data += [[Paragraph(esc_(v), ss["BodyText"]) for v in row] for row in r["table"]["rows"]]
+        data = [[Paragraph(f"<b>{esc(c)}</b>", ss["BodyText"]) for c in r["table"]["columns"]]]
+        data += [[Paragraph(esc(v), ss["BodyText"]) for v in row] for row in r["table"]["rows"]]
         t = Table(data, repeatRows=1)
         t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D5EDE0")),
                                ("VALIGN", (0, 0), (-1, -1), "TOP")]))
         story += [Spacer(1, 10), t]
     story.append(Paragraph("Sources", ss["Heading2"]))
-    story += [Paragraph("• " + esc_(s), ss["BodyText"]) for s in r["sources"]]
+    story += [Paragraph("• " + esc(s), ss["BodyText"]) for s in r["sources"]]
     buf = io.BytesIO()
     SimpleDocTemplate(buf, pagesize=A4, leftMargin=48, rightMargin=48, topMargin=48, bottomMargin=48).build(story)
     return buf.getvalue()
+# <<END EXPORTS>>
 
 
 # ----------------------------------------------------------------------------
@@ -597,7 +737,7 @@ def make_summary(docs):
 
 
 def answer_question(q, docs, tax):
-    hits = retrieve(q, docs, tax, k=8)
+    hits = retrieve(q, docs, tax, k=8, vs=VS)
     ctx = "\n\n".join(f"[S{i + 1}] {h['doc_title']} - {h['unit']} {h['page']}\n{h['text'][:1800]}" for i, h in enumerate(hits))
     sys = ("You are TMC Knowledge Lens. Answer ONLY from the sources. Cite every claim with [S#]. "
            "If the sources do not contain the answer, say so plainly. Be concise; use bullets for lists.")
@@ -610,7 +750,7 @@ def answer_question(q, docs, tax):
 
 def make_report(rtype, focus, docs, tax):
     query = focus or rtype
-    hits = retrieve(query, docs, tax, k=12)
+    hits = retrieve(query, docs, tax, k=12, vs=VS)
     ctx = "\n\n".join(f"[{h['doc_title']} - {h['unit']} {h['page']}]\n{h['text'][:1800]}" for h in hits)
     instr = REPORT_TYPES[rtype]
     sys = ("You write professional consulting reports from source excerpts only. Return ONLY JSON: "
@@ -625,7 +765,7 @@ def make_report(rtype, focus, docs, tax):
 
 
 # ----------------------------------------------------------------------------
-# Session state
+# Session state + sidebar (demo identity; replace with SSO in production)
 # ----------------------------------------------------------------------------
 ss_ = st.session_state
 ss_.setdefault("library", load_library())
@@ -648,17 +788,11 @@ def esc(s):
 
 def load_users():
     p = DATA / "users.json"
-    try:
-        return json.loads(p.read_text("utf-8")) if p.exists() else {}
-    except Exception:
-        return {}
+    return json.loads(p.read_text("utf-8")) if p.exists() else {}
 
 
 def save_users(u):
-    try:
-        (DATA / "users.json").write_text(json.dumps(u, indent=2, ensure_ascii=False), "utf-8")
-    except Exception:
-        pass
+    (DATA / "users.json").write_text(json.dumps(u, indent=2, ensure_ascii=False), "utf-8")
 
 
 def hash_pw(pw, salt=None):
@@ -697,7 +831,7 @@ def ensure_bootstrap_admin():
     pw = st.secrets.get("ADMIN_PASSWORD")
     if not pw:
         return
-    un = str(st.secrets.get("ADMIN_USERNAME", "nadeem.sohail")).strip().lower()
+    un = str(st.secrets.get("ADMIN_USERNAME", "admin")).strip().lower()
     users = load_users()
     if un not in users:
         users[un] = new_user_record(un, "Administrator", ROLE_ADMIN, [], str(pw), False, "secrets")
@@ -708,7 +842,7 @@ def try_login(username, password):
     users, un, now = load_users(), username.strip().lower(), time.time()
     u = users.get(un)
     if not u or not u["active"]:
-        hash_pw(password or "x")
+        hash_pw(password or "x")                      # keep timing similar
         audit("login_failed", username=un)
         return "Invalid username or password."
     if u.get("locked_until", 0) > now:
@@ -865,6 +999,25 @@ def can_see(d):
     return d["meta"].get("sap_module") in u["modules"]
 
 
+@st.cache_resource(show_spinner="Loading the semantic-search model (first run only)…")
+def get_vector_store():
+    try:
+        from fastembed import TextEmbedding
+        model = TextEmbedding(EMBED_MODEL)
+
+        def embed(texts, is_query):
+            if is_query:
+                texts = ["Represent this sentence for searching relevant passages: " + t for t in texts]
+            v = np.array(list(model.embed(texts)), dtype=np.float32)
+            return v / (np.linalg.norm(v, axis=1, keepdims=True) + 1e-9)
+        return VectorStore(DATA / "vectors.sqlite", embed), None
+    except Exception as e:                      # semantic search is optional: fall back to keyword search
+        return None, f"{type(e).__name__}: {e}"
+
+
+VS, VS_ERR = get_vector_store()
+
+
 def esc(s):
     return html.escape(str(s))
 
@@ -950,7 +1103,7 @@ with tab_ws:
             if go:
                 if q.strip():
                     t0 = time.time()
-                    ss_.results = {"label": f"Results for “{q.strip()}”", "items": search_docs(q, visible, tax)}
+                    ss_.results = {"label": f"Results for “{q.strip()}”", "items": search_docs(q, visible, tax, VS)}
                     audit("search", query=q.strip(), hits=len(ss_.results["items"]), seconds=round(time.time() - t0, 2))
                 else:
                     ss_.results = None
@@ -958,7 +1111,7 @@ with tab_ws:
             allowed = {d["id"] for d in candidates}
             if ss_.results:
                 shown = [it for it in ss_.results["items"] if it["id"] in allowed]
-                label = f"{ss_.results['label']} - {len(shown)} document(s)"
+                label = f"{ss_.results['label']} - {len(shown)} document(s)" + (" • 🧠 keyword + semantic" if VS else "")
             else:
                 shown = [{"id": d["id"], "rel": None, "page": None, "snippet": ""}
                          for d in sorted(candidates, key=lambda x: x["uploaded_at"], reverse=True)]
@@ -984,7 +1137,7 @@ with tab_ws:
                 c1, c2 = st.columns([1, 9])
                 c1.checkbox("select", key=key, on_change=toggle, args=(d["id"],), label_visibility="collapsed")
                 badge = '<span class="chip ok">✅ Current</span>' if d["status"] == "Current" else '<span class="chip old">⚠️ Superseded</span>'
-                body = f'<div class="doc-title">{esc(m["doc_title"])}</div>{badge}{chip("📑 " + m["doc_type"], "p")}{chip("🏢 " + m["client"])}{chip("🧩 " + m["sap_module"])}{chip("🪜 " + m["phase"])}'
+                body = f'<div class="doc-title">{esc(m["doc_title"])}</div>{badge}{chip('📑 ' + m["doc_type"], "p")}{chip('🏢 ' + m["client"])}{chip('🧩 ' + m["sap_module"])}{chip('🪜 ' + m["phase"])}'
                 if it["rel"] is not None:
                     body += f'<div class="relbar"><div style="width:{it["rel"]}%"></div></div><div class="small">🎯 Relevance {it["rel"]}%' + (f' • 📍 {d["unit"]} {it["page"]}' if it["page"] else "") + "</div>"
                     if it["snippet"]:
@@ -1049,10 +1202,10 @@ with tab_ws:
                 try:
                     ans, cites = answer_question(prompt, selected_docs, tax)
                     sec = round(time.time() - t0, 1)
-                    ss_.chat.append({"q": prompt, "a": ans, "cites": cites, "seconds": sec, "rating": None, "uid": str(uuid.uuid4())})
+                    ss_.chat.append({"q": prompt, "a": ans, "cites": cites, "seconds": sec, "rating": None})
                     audit("ask", question=prompt, seconds=sec, docs=len(selected_docs))
                 except Exception as e:
-                    ss_.chat.append({"q": prompt, "a": f"Sorry, the question failed: {e}", "cites": [], "seconds": 0, "rating": 0, "uid": str(uuid.uuid4())})
+                    ss_.chat.append({"q": prompt, "a": f"Sorry, the question failed: {e}", "cites": [], "seconds": 0, "rating": 0})
             with chat_box:
                 if not ss_.chat:
                     st.caption("Answers include citations like [S1] that point to the document and page.")
@@ -1068,9 +1221,8 @@ with tab_ws:
                                     st.caption(x["snippet"])
                         if c["rating"] is None:
                             r1, r2, _ = st.columns([1, 1, 6])
-                            unique_id = c.get("uid", str(uuid.uuid4()))
-                            r1.button("👍", key=f"fb_up_{i}_{unique_id}", on_click=rate, args=(i, 1))
-                            r2.button("👎", key=f"fb_dn_{i}_{unique_id}", on_click=rate, args=(i, -1))
+                            r1.button("👍", key=f"fb_up_{i}", on_click=rate, args=(i, 1))
+                            r2.button("👎", key=f"fb_dn_{i}", on_click=rate, args=(i, -1))
                         elif c["rating"] != 0:
                             st.caption("Thanks for the feedback.")
 
@@ -1085,7 +1237,7 @@ with tab_ws:
                     pages, _, _ = EXTRACTORS[rfp.name.rsplit(".", 1)[-1].lower()](rfp.getvalue())
                     words = Counter(t for t in tok(" ".join(pages)[:20000]) if len(t) > 3)
                     query = " ".join(w for w, _ in words.most_common(40))
-                    ss_.results = {"label": f"Similar to “{rfp.name}”", "items": search_docs(query, visible, tax)}
+                    ss_.results = {"label": f"Similar to “{rfp.name}”", "items": search_docs(query, visible, tax, VS)}
                     audit("similar_search", file=rfp.name)
                     st.success("Matches are listed under Sources.")
 
@@ -1131,9 +1283,8 @@ with tab_ws:
                             st.caption(m["summary"])
                         if d["status"] == "Superseded" and d.get("superseded_by") in by_id and can_see(by_id[d["superseded_by"]]):
                             st.warning(f"Newer version: {by_id[d['superseded_by']]['meta']['doc_title']}")
-                        p = Path(d.get("path", ""))
-                        if p.exists():
-                            st.download_button("⬇️ Download original", p.read_bytes(), file_name=d["name"], key=f"orig_{d['id']}")
+                        if d.get("path") and Path(d["path"]).exists():
+                            st.download_button("⬇️ Download original", Path(d["path"]).read_bytes(), file_name=d["name"], key=f"orig_{d['id']}")
 
 # ---- user-management callbacks -------------------------------------------------
 def _msg(kind, text):
@@ -1231,7 +1382,7 @@ with tab_admin:
         helpful = f"{100 * sum(r['rating'] == 1 for r in fb) / len(fb):.0f}%" if fb else "-"
         n_users = ldf["user"].nunique() if len(ldf) else 0
 
-        t_dash, t_users, t_lib, t_vocab, t_audit = st.tabs(["📊 Dashboard", "👥 Users & roles", "📚 Library", "🏷️ Vocabulary", "🧾 Audit log"])
+        t_dash, t_users, t_lib, t_vocab, t_store, t_audit = st.tabs(["📊 Dashboard", "👥 Users & roles", "📚 Library", "🏷️ Vocabulary", "💾 Storage & search index", "🧾 Audit log"])
         with t_dash:
             st.markdown("#### 📊 Pilot dashboard")
             kpis = [("📚", "Documents", len(ss_.library), f"{n_cur} current • {len(ss_.library) - n_cur} superseded", "#0F6B45", "#1FA67A"),
@@ -1383,7 +1534,9 @@ with tab_admin:
                 if a3.button("Delete document", use_container_width=True):
                     ss_.library = [x for x in ss_.library if x["id"] != pick]
                     ss_.selected.discard(pick)
-                    Path(d.get("path", "")).unlink(missing_ok=True)
+                    VS and VS.remove_doc(pick)
+                if d.get("path"):
+                    Path(d["path"]).unlink(missing_ok=True)
                     save_library(); audit("delete", doc=d["name"]); st.rerun()
                 v1, v2 = st.columns(2)
                 restr = v1.checkbox("🔒 Restricted (Admin and SAP: MPO only)", value=d.get("restricted", False), key=f"restr_{pick}")
@@ -1405,6 +1558,37 @@ with tab_admin:
                     save_taxonomy(t); audit("taxonomy_update"); st.success("Saved.")
                 except Exception as e:
                     st.error(f"Invalid vocabulary: {e}")
+
+        with t_store:
+            st.markdown("#### 💾 Storage & semantic search index")
+            sizes = {"📚 Library text (compressed)": dir_size(DATA / "library.json.gz") + dir_size(DATA / "library.json"),
+                     "📎 Original files": dir_size(DATA / "files"), "🧠 Vector index": dir_size(DATA / "vectors.sqlite"),
+                     "👥 Users, settings, audit": dir_size(DATA / "users.json") + dir_size(DATA / "settings.json") + dir_size(DATA / "audit.jsonl")}
+            for c, (lab, val) in zip(st.columns(4), sizes.items()):
+                c.metric(lab, human(val))
+            st.caption(f"Total used by Knowledge Lens: **{human(sum(sizes.values()))}** in `{DATA}`")
+            if VS:
+                stt = VS.stats()
+                st.success(f"🧠 Semantic search is ON ({EMBED_MODEL}). {stt['chunks']} chunks from {stt['docs']} of {len(ss_.library)} documents are indexed.")
+                missing = [d for d in ss_.library if not VS.has_doc(d["id"])]
+                if st.button(f"🔄 Index {len(missing)} document(s) not yet indexed" if missing else "🔄 Rebuild the whole index"):
+                    todo = missing or ss_.library
+                    bar = st.progress(0.0)
+                    for n_, d in enumerate(todo, 1):
+                        VS.add_doc(d)
+                        bar.progress(n_ / len(todo))
+                    audit("reindex", docs=len(todo))
+                    st.rerun()
+            else:
+                st.warning("Semantic search is OFF, so the app uses keyword search only. Add `fastembed` to requirements.txt and reboot. "
+                           f"Reason: {VS_ERR}")
+            keep = st.toggle("Keep original files (needed for 'Download original')", value=load_settings().get("keep_originals", True),
+                             help="Turn off to save disk space. Extracted text and the search index are always kept.")
+            if keep != load_settings().get("keep_originals", True):
+                save_settings({"keep_originals": keep})
+                audit("setting", keep_originals=keep)
+            st.caption("Streamlit Cloud erases this folder when the app restarts. Keep `.streamlit/kl_data/` out of GitHub (add it to .gitignore) "
+                       "and move to persistent storage before real use.")
 
         with t_audit:
             st.markdown("#### Audit log")
