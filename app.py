@@ -1,39 +1,38 @@
 import streamlit as st
 from openai import OpenAI
-from pypdf import PdfReader
+import pypdf
+import docx
+from pptx import Presentation
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import json
 import datetime
+import io
 
 # 1. Page Configuration
 st.set_page_config(page_title="TMC Knowledge Lens", page_icon="🔍", layout="wide")
 
-# Custom CSS for a modern, professional look
+# Custom CSS to mimic NotebookLM's clean, card-based look
 st.markdown("""
     <style>
-    .stApp { background-color: #F8F9FA; }
+    .stApp { background-color: #FAFAFA; font-family: 'Inter', sans-serif; }
+    header {visibility: hidden;}
+    .card {
+        background-color: white; padding: 20px; border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 15px;
+        border: 1px solid #E5E7EB;
+    }
     .stButton>button {
         background-color: #5B2C6F; color: white; border-radius: 8px;
-        font-weight: bold; padding: 10px 24px; transition: 0.3s;
+        font-weight: 600; padding: 8px 16px; width: 100%;
+        transition: 0.2s; border: none;
     }
     .stButton>button:hover { background-color: #7D3C98; color: white; }
-    .stTextInput>div>div>input { border-radius: 8px; border: 2px solid #5B2C6F; }
-    .stTabs [data-baseweb="tab-list"] { gap: 24px; }
-    .stTabs [data-baseweb="tab"] {
-        background-color: #FFFFFF; border-radius: 8px 8px 0px 0px;
-        padding: 10px 20px; border: 1px solid #E0E0E0;
+    .stTextInput>div>div>input { 
+        border-radius: 20px; border: 1px solid #D1D5DB; padding: 10px 20px;
     }
-    .stTabs [aria-selected="true"] { background-color: #5B2C6F; color: white; }
+    h3 { font-size: 1.2rem; font-weight: 600; color: #1F2937; margin-bottom: 10px;}
     </style>
 """, unsafe_allow_html=True)
-
-# Header
-col1, col2 = st.columns([1, 8])
-with col1:
-    st.image("https://tmcltd.com/wp-content/uploads/2025/10/TallyMarks-Consulting-TMC-logo.webp", width=120)
-with col2:
-    st.title("TMC Knowledge Lens")
-    st.markdown("<p style='color: gray; font-size: 1.1em;'>Librarian-Grade AI for Project Documentation</p>", unsafe_allow_html=True)
 
 # 2. Initialize Groq API Client
 try:
@@ -48,175 +47,199 @@ if "summary" not in st.session_state: st.session_state.summary = ""
 if "doc_text" not in st.session_state: st.session_state.doc_text = ""
 if "file_name" not in st.session_state: st.session_state.file_name = ""
 if "file_bytes" not in st.session_state: st.session_state.file_bytes = None
+if "chat_history" not in st.session_state: st.session_state.chat_history = []
 
-# 3. Sidebar: Upload & Submitter Info
-with st.sidebar:
-    st.image("https://tmcltd.com/wp-content/uploads/2025/10/TallyMarks-Consulting-TMC-logo.webp", width=150)
-    st.markdown("---")
+# --- TEXT EXTRACTION HELPER FUNCTIONS ---
+def extract_text_from_pdf(file_bytes):
+    reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+    text = ""
+    for page in reader.pages:
+        text += (page.extract_text() or "") + "\n"
+    return text, reader.metadata
+
+def extract_text_from_docx(file_bytes):
+    doc = docx.Document(io.BytesIO(file_bytes))
+    text = "\n".join([para.text for para in doc.paragraphs])
+    return text, None
+
+def extract_text_from_pptx(file_bytes):
+    prs = Presentation(io.BytesIO(file_bytes))
+    text = ""
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if hasattr(shape, "text"):
+                text += shape.text + "\n"
+    return text, None
+
+def extract_text_from_txt(file_bytes):
+    return file_bytes.decode("utf-8", errors="ignore"), None
+
+# --- HEADER ---
+col_logo, col_title = st.columns([1, 11], vertical_alignment="center")
+with col_logo:
+    st.image("https://tmcltd.com/wp-content/uploads/2025/10/TallyMarks-Consulting-TMC-logo.webp", width=100)
+with col_title:
+    st.markdown('<h2 style="color: #5B2C6F; margin-bottom: 0;">Knowledge Lens</h2>', unsafe_allow_html=True)
+    st.markdown('<p style="color: gray; margin-top: 0; font-size: 0.9rem;">Enterprise AI Workspace</p>', unsafe_allow_html=True)
+
+st.markdown("<hr style='margin-top: 5px; margin-bottom: 20px;'>", unsafe_allow_html=True)
+
+# --- THREE COLUMN LAYOUT ---
+col_sources, col_chat, col_studio = st.columns([1.2, 2, 1.2])
+
+# ==========================================
+# LEFT COLUMN: SOURCES
+# ==========================================
+with col_sources:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown("### 📁 Sources")
     
-    st.header("👤 Submitter Info")
-    submitter_name = st.text_input("Your Name", placeholder="e.g., Nadeem Sohail")
-    submitter_email = st.text_input("Email", placeholder="e.g., nadeem@tmcltd.com")
-    submitter_dept = st.text_input("Department", placeholder="e.g., AI Engineering")
+    # UPDATED: Accept multiple file types
+    uploaded_file = st.file_uploader(
+        "Add a source file", 
+        type=["pdf", "docx", "pptx", "txt"], 
+        label_visibility="collapsed"
+    )
     
-    st.divider()
-    
-    st.header("📄 Upload Document")
-    uploaded_file = st.file_uploader("Upload a PDF", type="pdf")
-
-# 4. Process the Uploaded PDF
-if uploaded_file is not None:
-    if st.session_state.file_name != uploaded_file.name:
-        with st.spinner("🔍 AI is reading, cataloging, and summarizing..."):
-            st.session_state.file_name = uploaded_file.name
-            st.session_state.file_bytes = uploaded_file.getvalue()
-            
-            # Extract PDF Native Metadata
-            pdf_reader = PdfReader(uploaded_file)
-            native_meta = pdf_reader.metadata
-            native_author = native_meta.author if native_meta and native_meta.author else "Unknown"
-            native_date = native_meta.creation_date if native_meta and native_meta.creation_date else "Unknown"
-            
-            # Extract Text
-            raw_text = ""
-            for page in pdf_reader.pages:
-                raw_text += page.extract_text() + "\n"
-            
-            text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
-            chunks = text_splitter.split_text(raw_text)
-            st.session_state.doc_text = "\n".join(chunks[:15]) 
-            
-            # AI Auto-Tagging & Summary
-            sys_prompt = f"""
-            You are a librarian AI. Read the text and return a JSON object with these exact keys:
-            "client": (e.g., "Tata Motors" or "All"),
-            "module": (e.g., "S/4HANA" or "All"),
-            "doc_type": (e.g., "Blueprint", "Proposal", or "All"),
-            "doc_title": (The real title of the document, inferred from the text),
-            "doc_author": (Author if mentioned in text, else use '{native_author}'),
-            "summary": "A 2-sentence summary of the project.",
-            "key_decisions": "Bullet points of key decisions made.",
-            "timeline": "Key dates or phases mentioned.",
-            "risks": "Any risks mentioned."
-            """
-            
-            tag_response = client.chat.completions.create(
-                model="openai/gpt-oss-120b",
-                messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": st.session_state.doc_text[:6000]}],
-                response_format={ "type": "json_object" }
-            )
-            
-            try:
-                meta = json.loads(tag_response.choices[0].message.content)
-                meta["native_date"] = native_date
-                meta["submitter"] = submitter_name
-                meta["email"] = submitter_email
-                meta["dept"] = submitter_dept
-                meta["upload_date"] = datetime.date.today().strftime("%Y-%m-%d")
-                st.session_state.metadata = meta
-                st.session_state.summary = meta.get("summary", "")
-            except:
-                st.error("Failed to parse AI response. Please try another document.")
-            
-            st.rerun() 
-
-# 5. Main Area: Tabs
-if st.session_state.file_name:
-    tab1, tab2, tab3 = st.tabs(["📋 Project at a Glance", "💬 Search Q&A", "📑 Custom Report"])
-    
-    # TAB 1: Project at a Glance
-    with tab1:
-        st.subheader(f"📄 {st.session_state.metadata.get('doc_title', st.session_state.file_name)}")
-        
-        # Metadata Grid
-        col_a, col_b, col_c = st.columns(3)
-        col_a.metric("Client", st.session_state.metadata.get('client', 'N/A'))
-        col_b.metric("SAP Module", st.session_state.metadata.get('module', 'N/A'))
-        col_c.metric("Document Type", st.session_state.metadata.get('doc_type', 'N/A'))
-        
-        st.markdown("---")
-        st.info(f"**Summary:** {st.session_state.summary}")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("#### 🎯 Key Decisions")
-            st.write(st.session_state.metadata.get('key_decisions', 'None found.'))
-            st.markdown("#### ⚠️ Risks")
-            st.write(st.session_state.metadata.get('risks', 'None found.'))
-        with col2:
-            st.markdown("#### 🗓️ Timeline")
-            st.write(st.session_state.metadata.get('timeline', 'None found.'))
-            st.markdown("#### 👤 Document Info")
-            st.write(f"**Author:** {st.session_state.metadata.get('doc_author', 'Unknown')}")
-            st.write(f"**Date:** {st.session_state.metadata.get('native_date', 'Unknown')}")
-            st.write(f"**Submitted By:** {st.session_state.metadata.get('submitter', 'N/A')} ({st.session_state.metadata.get('dept', 'N/A')})")
-
-        # Download original PDF
-        st.download_button(
-            label="📥 Download Original PDF",
-            data=st.session_state.file_bytes,
-            file_name=st.session_state.file_name,
-            mime="application/pdf"
-        )
-
-    # TAB 2: Search Q&A
-    with tab2:
-        st.subheader("Ask the Knowledge Lens")
-        with st.form(key="search_form"):
-            query = st.text_input("Ask a question about the uploaded document...", placeholder="e.g., What is the cutover strategy?")
-            submit_button = st.form_submit_button("Search")
-
-        if submit_button and query:
-            with st.spinner("Analyzing..."):
-                prompt = f"Use the document excerpts to answer the question. If not found, say 'I don't know'.\n\nDocument:\n{st.session_state.doc_text}\n\nQuestion: {query}"
-                response = client.chat.completions.create(
-                    model="openai/gpt-oss-120b",
-                    messages=[{"role": "system", "content": "You are a precise assistant."}, {"role": "user", "content": prompt}],
-                    temperature=0.1
-                )
-                answer = response.choices[0].message.content
+    if uploaded_file is not None:
+        if st.session_state.file_name != uploaded_file.name:
+            with st.spinner("Processing document..."):
+                st.session_state.file_name = uploaded_file.name
+                file_bytes = uploaded_file.getvalue()
+                st.session_state.file_bytes = file_bytes
                 
-                st.success("✅ **Answer found:**")
-                st.markdown(answer)
-                st.caption(f"Source Citation: `{st.session_state.file_name}`")
+                # Determine file type and extract text
+                file_ext = uploaded_file.name.split(".")[-1].lower()
+                native_author = "Unknown"
                 
-                # Download Answer
-                st.download_button(
-                    label="📥 Download Answer as Text",
-                    data=f"Question: {query}\n\nAnswer:\n{answer}",
-                    file_name="Knowledge_Lens_Answer.txt",
-                    mime="text/plain"
-                )
+                if file_ext == "pdf":
+                    raw_text, meta = extract_text_from_pdf(file_bytes)
+                    if meta and meta.author: native_author = meta.author
+                elif file_ext == "docx":
+                    raw_text, _ = extract_text_from_docx(file_bytes)
+                elif file_ext == "pptx":
+                    raw_text, _ = extract_text_from_pptx(file_bytes)
+                elif file_ext == "txt":
+                    raw_text, _ = extract_text_from_txt(file_bytes)
+                
+                # Split into chunks
+                splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+                chunks = splitter.split_text(raw_text)
+                st.session_state.doc_text = "\n".join(chunks[:20])
+                
+                # AI Auto-Tagging
+                sys_prompt = f"""
+                Read the text. Return a JSON object with:
+                "client": (e.g., "Tata Motors" or "Other"),
+                "module": (e.g., "S/4HANA" or "All"),
+                "doc_type": (e.g., "Blueprint", "Proposal", "Presentation", etc.),
+                "doc_title": (Real title of the doc),
+                "doc_author": (Author or '{native_author}'),
+                "summary": "2-sentence summary.",
+                "key_decisions": "Bullet points.",
+                "timeline": "Key dates.",
+                "risks": "Risks mentioned."
+                """
+                try:
+                    res = client.chat.completions.create(
+                        model="openai/gpt-oss-120b",
+                        messages=[{"role": "system", "content": sys_prompt}, {"role": "user", "content": st.session_state.doc_text[:6000]}],
+                        response_format={ "type": "json_object" }
+                    )
+                    meta = json.loads(res.choices[0].message.content)
+                    meta["submitter"] = "Nadeem Sohail" # Hardcoded for demo
+                    meta["dept"] = "AI Engineering"
+                    st.session_state.metadata = meta
+                    st.session_state.summary = meta.get("summary", "")
+                except Exception as e:
+                    st.error(f"AI Parsing Error: {e}")
+                st.rerun()
 
-    # TAB 3: Custom Report
-    with tab3:
-        st.subheader("Generate Custom Report")
-        st.write("Select specific aspects of the document you want to extract into a report.")
+    if st.session_state.file_name:
+        st.success(f"✅ {st.session_state.file_name}")
+        st.caption(f"Client: {st.session_state.metadata.get('client', 'Unknown')} | Type: {st.session_state.metadata.get('doc_type', 'Unknown')}")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ==========================================
+# MIDDLE COLUMN: CHAT / Q&A
+# ==========================================
+with col_chat:
+    st.markdown("### 💬 Ask the Lens")
+    
+    # Display Chat History
+    for chat in st.session_state.chat_history:
+        with st.chat_message("user"):
+            st.write(chat["question"])
+        with st.chat_message("assistant"):
+            st.write(chat["answer"])
+            st.caption(f"Source: {st.session_state.file_name}")
+
+    # Chat Input
+    with st.form(key="chat_form", clear_on_submit=True):
+        query = st.text_input("Ask a question...", placeholder="e.g., What are the main risks?", label_visibility="collapsed")
+        submit = st.form_submit_button("Send")
         
-        report_prompt = st.text_area(
-            "What should the report focus on?",
-            placeholder="e.g., Extract all mentions of 'Finance' and 'Cutover' into a structured summary."
-        )
-        
-        if st.button("Generate Report"):
-            if report_prompt:
-                with st.spinner("Generating custom report..."):
-                    prompt = f"Based on the document, generate a detailed report focusing on: {report_prompt}\n\nDocument:\n{st.session_state.doc_text}"
+        if submit and query:
+            if not st.session_state.file_name:
+                st.warning("Please upload a document first.")
+            else:
+                with st.spinner("Searching..."):
+                    prompt = f"Answer based ONLY on this document:\n\n{st.session_state.doc_text}\n\nQuestion: {query}"
                     response = client.chat.completions.create(
                         model="openai/gpt-oss-120b",
-                        messages=[{"role": "system", "content": "You are a professional report writer."}, {"role": "user", "content": prompt}],
-                        temperature=0.2
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.1
                     )
-                    report_text = response.choices[0].message.content
-                    st.markdown(report_text)
+                    answer = response.choices[0].message.content
                     
-                    st.download_button(
-                        label="📥 Download Report",
-                        data=report_text,
-                        file_name="Custom_Report.txt",
-                        mime="text/plain"
-                    )
-            else:
-                st.warning("Please enter a prompt for the report.")
-else:
-    st.info("👈 Please upload a PDF document in the sidebar to begin.")
+                    st.session_state.chat_history.append({"question": query, "answer": answer})
+                    st.rerun()
+
+
+# ==========================================
+# RIGHT COLUMN: STUDIO
+# ==========================================
+with col_studio:
+    st.markdown("### 🎛️ Studio")
+    
+    if st.session_state.file_name:
+        # 1. Project at a Glance
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown("#### 📄 At a Glance")
+        st.info(st.session_state.summary)
+        
+        with st.expander("View Key Details"):
+            st.markdown(f"**Decisions:**\n{st.session_state.metadata.get('key_decisions', 'N/A')}")
+            st.markdown(f"**Timeline:**\n{st.session_state.metadata.get('timeline', 'N/A')}")
+            st.markdown(f"**Risks:**\n{st.session_state.metadata.get('risks', 'N/A')}")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # 2. Custom Report Generator
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown("#### 📑 Generate Report")
+        report_prompt = st.text_area("What should the report focus on?", placeholder="e.g., Extract all Finance details.")
+        
+        if st.button("Generate"):
+            if report_prompt:
+                with st.spinner("Writing..."):
+                    prompt = f"Write a report on '{report_prompt}' based on:\n{st.session_state.doc_text}"
+                    res = client.chat.completions.create(model="openai/gpt-oss-120b", messages=[{"role": "user", "content": prompt}])
+                    report_text = res.choices[0].message.content
+                    st.download_button("📥 Download Report", report_text, file_name="report.txt")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # 3. Downloads
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown("#### 📥 Export")
+        st.download_button(
+            label="Download Original File",
+            data=st.session_state.file_bytes,
+            file_name=st.session_state.file_name,
+            mime="application/octet-stream",
+            use_container_width=True
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+    else:
+        st.info("Upload a document to unlock studio features.")
