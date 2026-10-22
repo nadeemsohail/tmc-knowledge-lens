@@ -1031,7 +1031,7 @@ with tab_ws:
                 try:
                     ans, cites = answer_question(prompt, selected_docs, tax)
                     sec = round(time.time() - t0, 1)
-                    ss_.chat.append({"q": prompt, "a": ans, "cites": cites, "seconds": sec, "rating": None})
+                   ss_.chat.append({"q": prompt, "a": ans, "cites": cites, "seconds": sec, "rating": None, "uid": str(uuid.uuid4())})
                     audit("ask", question=prompt, seconds=sec, docs=len(selected_docs))
                 except Exception as e:
                     ss_.chat.append({"q": prompt, "a": f"Sorry, the question failed: {e}", "cites": [], "seconds": 0, "rating": 0})
@@ -1048,10 +1048,14 @@ with tab_ws:
                                 for x in c["cites"]:
                                     st.markdown(f"**[S{x['n']}] {x['title']}** - {x['loc']}")
                                     st.caption(x["snippet"])
-                        if c["rating"] is None:
+                                             if c["rating"] is None:
                             r1, r2, _ = st.columns([1, 1, 6])
-                            r1.button("👍", key=f"fb_up_{i}", on_click=rate, args=(i, 1))
-                            r2.button("👎", key=f"fb_dn_{i}", on_click=rate, args=(i, -1))
+                            # Use the unique ID to prevent StreamlitDuplicateElementKey
+                            unique_id = c.get("uid", str(uuid.uuid4()))
+                            if "uid" not in c:
+                                c["uid"] = unique_id
+                            r1.button("👍", key=f"fb_up_{i}_{unique_id}", on_click=rate, args=(i, 1))
+                            r2.button("👎", key=f"fb_dn_{i}_{unique_id}", on_click=rate, args=(i, -1))
                         elif c["rating"] != 0:
                             st.caption("Thanks for the feedback.")
 
