@@ -8,3 +8,4 @@ reportlab
 pandas
 numpy
 fastembed
+onnxruntime>=1.17
