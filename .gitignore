@@ -1,0 +1,5 @@
+# Never commit confidential documents, users or vectors
+.streamlit/kl_data/
+.streamlit/secrets.toml
+kl_data/
+__pycache__/
