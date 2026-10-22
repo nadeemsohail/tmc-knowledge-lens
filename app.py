@@ -76,6 +76,12 @@ div[data-testid="stVerticalBlockBorderWrapper"] { border-radius:18px; }
 .topbar .pills { display:flex; gap:10px; }
 .topbar .pill { background:rgba(255,255,255,.15); color:#fff; border:1px solid rgba(255,255,255,.3);
                 border-radius:999px; padding:6px 14px; font-size:.82rem; white-space:nowrap; }
+.kpi { border-radius:16px; padding:16px 18px; color:#fff; box-shadow:0 4px 12px rgba(0,0,0,.12); min-height:132px; }
+.kpi .ic { font-size:1.5rem; }
+.kpi .v { font-size:2.1rem; font-weight:700; line-height:1.15; }
+.kpi .l { font-size:.9rem; font-weight:600; opacity:.95; }
+.kpi .s { font-size:.74rem; opacity:.85; margin-top:2px; }
+.chart-title { font-weight:700; color:#0F6B45; margin:6px 0 2px; font-size:.98rem; }
 .panel-title { display:flex; align-items:center; gap:8px; font-weight:700; font-size:1.1rem; color:#0F6B45; margin-bottom:4px; }
 .chip { display:inline-block; padding:1px 9px; border-radius:999px; background:#EEF0F6;
         color:#3B4252; font-size:.72rem; margin:2px 4px 2px 0; }
@@ -899,17 +905,94 @@ with tab_admin:
         st.info("Turn on Admin mode in the sidebar to manage the library, vocabulary and pilot metrics.")
     else:
         import pandas as pd
+        import altair as alt
+        PAL = ["#0F6B45", "#1FA67A", "#F2A93B", "#3B82F6", "#E8590C", "#8E5BD0"]
         log = read_audit()
+        ldf = pd.DataFrame(log) if log else pd.DataFrame(columns=["ts", "user", "action"])
         asks = [r for r in log if r["action"] == "ask"]
         fb = [r for r in log if r["action"] == "feedback"]
-        st.markdown("#### Pilot metrics")
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Documents", len(ss_.library))
-        m2.metric("Questions asked", len(asks))
-        m3.metric("Avg. answer time", f"{(sum(r['seconds'] for r in asks) / len(asks)):.1f}s" if asks else "-")
-        m4.metric("Helpful answers", f"{100 * sum(r['rating'] == 1 for r in fb) / len(fb):.0f}%" if fb else "-")
-        m5.metric("Reports generated", sum(r["action"] == "report" for r in log))
-        st.caption("Use these alongside the manual baseline measured in November (search test, summary test).")
+        n_search = sum(r["action"] == "search" for r in log)
+        n_rep = sum(r["action"] == "report" for r in log)
+        n_cur = sum(d["status"] == "Current" for d in ss_.library)
+        avg_t = f"{sum(r['seconds'] for r in asks) / len(asks):.1f}s" if asks else "-"
+        helpful = f"{100 * sum(r['rating'] == 1 for r in fb) / len(fb):.0f}%" if fb else "-"
+        users = ldf["user"].nunique() if len(ldf) else 0
+
+        st.markdown("#### 📊 Pilot dashboard")
+        kpis = [("📚", "Documents", len(ss_.library), f"{n_cur} current • {len(ss_.library) - n_cur} superseded", "#0F6B45", "#1FA67A"),
+                ("💬", "Questions asked", len(asks), f"{users} active user(s)", "#2563EB", "#3B82F6"),
+                ("🔍", "Searches", n_search, "library searches run", "#7C3AED", "#A78BFA"),
+                ("⏱️", "Avg. answer time", avg_t, "manual baseline ≈ 12 min", "#D97706", "#F2A93B"),
+                ("👍", "Helpful answers", helpful, f"{len(fb)} rating(s) given", "#059669", "#34D399"),
+                ("📝", "Reports generated", n_rep, "Word • PPT • Excel • PDF", "#DC2626", "#F97316")]
+        for c, (ic, lab, val, sub, c1, c2) in zip(st.columns(6), kpis):
+            c.markdown(f'<div class="kpi" style="background:linear-gradient(135deg,{c1},{c2})"><div class="ic">{ic}</div>'
+                       f'<div class="v">{val}</div><div class="l">{lab}</div><div class="s">{sub}</div></div>', unsafe_allow_html=True)
+        st.caption("Compare these with the manual baseline measured in November (search test, summary test).")
+
+        def donut(rows, colors, title):
+            st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
+            df_ = pd.DataFrame(rows, columns=["label", "count"])
+            df_ = df_[df_["count"] > 0]
+            if df_.empty:
+                st.caption("No data yet.")
+                return
+            ch = alt.Chart(df_).mark_arc(innerRadius=55, outerRadius=100).encode(
+                theta="count:Q", color=alt.Color("label:N", scale=alt.Scale(domain=list(df_["label"]), range=colors[:len(df_)]), legend=alt.Legend(orient="bottom", title=None)),
+                tooltip=["label", "count"]).properties(height=260)
+            st.altair_chart(ch, use_container_width=True)
+
+        def hbar(counter, title, color):
+            st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
+            if not counter:
+                st.caption("No data yet.")
+                return
+            df_ = pd.DataFrame(counter.most_common(8), columns=["label", "count"])
+            ch = alt.Chart(df_).mark_bar(cornerRadiusEnd=5, color=color).encode(
+                x=alt.X("count:Q", title=None, axis=alt.Axis(tickMinStep=1)), y=alt.Y("label:N", sort="-x", title=None), tooltip=["label", "count"]).properties(height=260)
+            st.altair_chart(ch, use_container_width=True)
+
+        r1a, r1b = st.columns([3, 2])
+        with r1a:
+            st.markdown('<div class="chart-title">📈 Activity over time</div>', unsafe_allow_html=True)
+            ACTS = ["search", "ask", "summary", "report", "upload"]
+            act = ldf[ldf["action"].isin(ACTS)].copy() if len(ldf) else ldf
+            if len(act):
+                act["day"] = pd.to_datetime(act["ts"]).dt.floor("D")
+                grp = act.groupby(["day", "action"]).size().reset_index(name="count")
+                ch = alt.Chart(grp).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
+                    x=alt.X("day:T", title=None, axis=alt.Axis(format="%d %b")), y=alt.Y("count:Q", title=None, axis=alt.Axis(tickMinStep=1)),
+                    color=alt.Color("action:N", scale=alt.Scale(domain=ACTS, range=PAL[:5]), legend=alt.Legend(orient="bottom", title=None)),
+                    tooltip=["day:T", "action", "count"]).properties(height=260)
+                st.altair_chart(ch, use_container_width=True)
+            else:
+                st.caption("No activity yet.")
+        with r1b:
+            up = sum(r["rating"] == 1 for r in fb)
+            down = sum(r["rating"] == -1 for r in fb)
+            donut([("👍 Helpful", up), ("👎 Not helpful", down), ("Not rated", max(len(asks) - len(fb), 0))],
+                  ["#1FA67A", "#E8590C", "#C8CDD6"], "🎯 Answer feedback")
+
+        r2a, r2b, r2c = st.columns(3)
+        with r2a:
+            hbar(Counter(d["meta"]["doc_type"] for d in ss_.library), "📑 Documents by type", PAL[0])
+        with r2b:
+            hbar(Counter(d["meta"]["client"] for d in ss_.library), "🏢 Documents by client", PAL[3])
+        with r2c:
+            donut(list(Counter(d["meta"]["sap_module"] for d in ss_.library).items()), PAL, "🧩 Documents by SAP module")
+
+        r3a, r3b = st.columns([2, 3])
+        with r3a:
+            hbar(Counter(r["query"].lower() for r in log if r["action"] == "search"), "🔎 Top search terms", PAL[2])
+        with r3b:
+            st.markdown('<div class="chart-title">⏱️ Answer time per question (seconds)</div>', unsafe_allow_html=True)
+            if asks:
+                tdf = pd.DataFrame({"question": range(1, len(asks) + 1), "seconds": [r["seconds"] for r in asks], "text": [r["question"][:60] for r in asks]})
+                ch = alt.Chart(tdf).mark_area(line={"color": PAL[4]}, color=alt.Gradient(gradient="linear", stops=[alt.GradientStop(color="#F9C9A8", offset=0), alt.GradientStop(color="#FFF3EA", offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(
+                    x=alt.X("question:O", title="Question #"), y=alt.Y("seconds:Q", title=None), tooltip=["question", "seconds", "text"]).properties(height=260)
+                st.altair_chart(ch + ch.mark_point(color=PAL[4], filled=True, size=70), use_container_width=True)
+            else:
+                st.caption("Ask a question in the Workspace to see timings.")
 
         st.markdown("#### Library")
         if ss_.library:
