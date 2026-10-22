@@ -825,8 +825,8 @@ with tab_ws:
                                     st.caption(x["snippet"])
                         if c["rating"] is None:
                             r1, r2, _ = st.columns([1, 1, 6])
-                            r1.button("👍", key=f"up_{i}", on_click=rate, args=(i, 1))
-                            r2.button("👎", key=f"dn_{i}", on_click=rate, args=(i, -1))
+                            r1.button("👍", key=f"fb_up_{i}", on_click=rate, args=(i, 1))
+                            r2.button("👎", key=f"fb_dn_{i}", on_click=rate, args=(i, -1))
                         elif c["rating"] != 0:
                             st.caption("Thanks for the feedback.")
 
