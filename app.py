@@ -19,7 +19,7 @@ from xml.sax.saxutils import escape as xml_escape
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
-import json, io, re, math, hashlib, time, difflib, os, uuid, html
+import json, io, re, math, hashlib, hmac, secrets, time, difflib, os, uuid, html
 
 st.set_page_config(page_title="TMC Knowledge Lens", page_icon="🔍", layout="wide")
 
@@ -29,7 +29,22 @@ st.set_page_config(page_title="TMC Knowledge Lens", page_icon="🔍", layout="wi
 MODEL = st.secrets.get("MODEL", "openai/gpt-oss-120b")
 DATA = Path(os.environ.get("KL_DATA_DIR", "kl_data"))   # NOTE: use a persistent volume / DB in production
 (DATA / "files").mkdir(parents=True, exist_ok=True)
-GROUPS = ["Pre-Sales", "Delivery", "Management"]
+ROLE_ADMIN, ROLE_MPO, ROLE_CONS = "Admin", "SAP: MPO", "SAP: Consultant"
+ROLES = {
+    ROLE_ADMIN: {"icon": "🛡️", "upload": True,
+                 "desc": "Full rights. Adds and manages users, sees every document, and manages the library, vocabulary and audit log."},
+    ROLE_MPO: {"icon": "⭐", "upload": True,
+               "desc": "Full view of all documents, including restricted ones. Can search, ask, report and upload."},
+    ROLE_CONS: {"icon": "🧑‍💻", "upload": False,
+                "desc": "Limited view: only documents of the SAP modules assigned to them. Can search, ask and report; cannot upload."},
+}
+MODULE_LABELS = {"FI/CO": "Finance (FI/CO)", "HCM": "HR (HCM)", "MM": "Materials Mgmt (MM)", "SD": "Sales & Distribution (SD)",
+                 "PP": "Production (PP)", "PM": "Plant Maintenance (PM)", "QM": "Quality (QM)", "WM/EWM": "Warehouse (WM/EWM)",
+                 "BTP": "Business Technology Platform (BTP)"}
+
+
+def module_label(m):
+    return MODULE_LABELS.get(m, m)
 PANEL_H = 720
 
 DEFAULT_TAXONOMY = {
@@ -82,6 +97,8 @@ div[data-testid="stVerticalBlockBorderWrapper"] { border-radius:18px; }
 .kpi .l { font-size:.9rem; font-weight:600; opacity:.95; }
 .kpi .s { font-size:.74rem; opacity:.85; margin-top:2px; }
 .chart-title { font-weight:700; color:#0F6B45; margin:6px 0 2px; font-size:.98rem; }
+.rolecard { background:#fff; border:1px solid #E3E6EE; border-top:4px solid #0F6B45; border-radius:14px; padding:12px 14px; min-height:120px; }
+.rolecard .ic { font-size:1.4rem; } .rolecard .s { font-size:.78rem; color:#5F6368; margin-top:4px; }
 .panel-title { display:flex; align-items:center; gap:8px; font-weight:700; font-size:1.1rem; color:#0F6B45; margin-bottom:4px; }
 .chip { display:inline-block; padding:1px 9px; border-radius:999px; background:#EEF0F6;
         color:#3B4252; font-size:.72rem; margin:2px 4px 2px 0; }
@@ -144,8 +161,8 @@ def save_library():
 
 
 def audit(action, **detail):
-    u = st.session_state.get("user", {"name": "anonymous"})
-    row = {"ts": datetime.now().isoformat(timespec="seconds"), "user": u["name"], "action": action, **detail}
+    u = st.session_state.get("user") or {"name": "anonymous"}
+    row = {"ts": datetime.now().isoformat(timespec="seconds"), "user": u.get("username", u["name"]), "action": action, **detail}
     with open(DATA / "audit.jsonl", "a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
@@ -386,7 +403,7 @@ def detect_versions(new, library):
     return None, None
 
 
-def ingest(file, access, tax):
+def ingest(file, restricted, tax):
     raw, ext = file.getvalue(), file.name.rsplit(".", 1)[-1].lower()
     pages, author, unit = EXTRACTORS[ext](raw)
     if not "".join(pages).strip():
@@ -395,7 +412,7 @@ def ingest(file, access, tax):
     doc = {"id": uuid.uuid4().hex[:10], "name": file.name, "ext": ext, "pages": pages, "unit": unit,
            "author": author, "meta": meta, "hash": hashlib.sha256(raw).hexdigest(),
            "uploaded_by": st.session_state.user["name"], "uploaded_at": datetime.now().isoformat(timespec="seconds"),
-           "access": access or ["All"], "sanitized": True, "status": "Current", "superseded_by": None}
+           "access": ["All"], "restricted": bool(restricted), "sanitized": True, "status": "Current", "superseded_by": None}
     kind, other = detect_versions(doc, st.session_state.library)
     if kind == "duplicate":
         return "warning", f"{file.name} is identical to “{other['meta']['doc_title']}” - not added."
@@ -412,7 +429,7 @@ def ingest(file, access, tax):
     doc["path"] = str(path)
     st.session_state.library.append(doc)
     save_library()
-    audit("upload", doc=doc["name"], access=doc["access"])
+    audit("upload", doc=doc["name"], restricted=doc["restricted"])
     return "success", f"Added “{meta['doc_title']}” ({meta['doc_type']}, {meta['client']}).{note}"
 
 
@@ -610,25 +627,224 @@ ss_.setdefault("up_key", 0)
 ss_.setdefault("rfp_key", 0)
 tax = load_taxonomy()
 
+# ----------------------------------------------------------------------------
+# Users, passwords and roles
+# ----------------------------------------------------------------------------
+def esc(s):
+    return html.escape(str(s))
+
+
+def load_users():
+    p = DATA / "users.json"
+    return json.loads(p.read_text("utf-8")) if p.exists() else {}
+
+
+def save_users(u):
+    (DATA / "users.json").write_text(json.dumps(u, indent=2, ensure_ascii=False), "utf-8")
+
+
+def hash_pw(pw, salt=None):
+    salt = salt or os.urandom(16).hex()
+    return salt, hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), 200_000).hex()
+
+
+def check_pw(pw, salt, h):
+    return hmac.compare_digest(hash_pw(pw, salt)[1], h)
+
+
+def pw_problem(pw):
+    if len(pw) < 8:
+        return "Password must be at least 8 characters."
+    if not (re.search(r"[A-Za-z]", pw) and re.search(r"\d", pw)):
+        return "Password must contain both letters and numbers."
+    return None
+
+
+def gen_password():
+    while True:
+        p = secrets.token_urlsafe(9)
+        if not pw_problem(p):
+            return p
+
+
+def new_user_record(username, name, role, modules, password, must_change, by):
+    salt, h = hash_pw(password)
+    return {"username": username, "name": name, "role": role, "modules": modules if role == ROLE_CONS else [],
+            "salt": salt, "hash": h, "active": True, "must_change": must_change, "created_by": by,
+            "created_at": datetime.now().isoformat(timespec="seconds"), "last_login": None, "fails": 0, "locked_until": 0}
+
+
+def ensure_bootstrap_admin():
+    """Admin account defined in app secrets (ADMIN_USERNAME / ADMIN_PASSWORD). Re-created if the user file is lost."""
+    pw = st.secrets.get("Paklag@2026")
+    if not pw:
+        return
+    un = str(st.secrets.get("ADMIN_USERNAME", "nadeem.sohail")).strip().lower()
+    users = load_users()
+    if un not in users:
+        users[un] = new_user_record(un, "Administrator", ROLE_ADMIN, [], str(pw), False, "secrets")
+        save_users(users)
+
+
+def try_login(username, password):
+    users, un, now = load_users(), username.strip().lower(), time.time()
+    u = users.get(un)
+    if not u or not u["active"]:
+        hash_pw(password or "x")                      # keep timing similar
+        audit("login_failed", username=un)
+        return "Invalid username or password."
+    if u.get("locked_until", 0) > now:
+        return f"Too many attempts. Try again in {int((u['locked_until'] - now) // 60) + 1} minute(s)."
+    if check_pw(password, u["salt"], u["hash"]):
+        u.update(fails=0, locked_until=0, last_login=datetime.now().isoformat(timespec="seconds"))
+        save_users(users)
+        ss_.auth = un
+        ss_.user = {"name": u["name"], "username": un}
+        audit("login")
+        return None
+    u["fails"] = u.get("fails", 0) + 1
+    if u["fails"] >= 5:
+        u.update(fails=0, locked_until=now + 300)
+    save_users(users)
+    audit("login_failed", username=un)
+    return "Invalid username or password."
+
+
+def auth_header(subtitle):
+    st.markdown(f"""
+<div class="topbar">
+  <div class="logo"><img src="https://tmcltd.com/wp-content/uploads/2025/10/TallyMarks-Consulting-TMC-logo.webp" width="64"></div>
+  <div class="titles"><h1>🔍 Knowledge Lens</h1><p>{subtitle}</p></div>
+</div>""", unsafe_allow_html=True)
+
+
+def render_login():
+    auth_header("Sign in to search and use TMC project knowledge.")
+    _, mid, _ = st.columns([1, 1.2, 1])
+    with mid, st.container(border=True):
+        if not load_users():
+            st.markdown("### 🛠️ First-time setup")
+            st.warning("No users exist yet. Create the administrator account. For a safer setup, add ADMIN_USERNAME and "
+                       "ADMIN_PASSWORD to the app secrets instead.")
+            with st.form("setup"):
+                nm = st.text_input("Full name")
+                un = st.text_input("Username")
+                p1 = st.text_input("Password", type="password")
+                p2 = st.text_input("Confirm password", type="password")
+                go = st.form_submit_button("Create administrator", type="primary", use_container_width=True)
+            if go:
+                un = un.strip().lower()
+                if not nm.strip() or not re.fullmatch(r"[a-z0-9._-]{3,32}", un):
+                    st.error("Enter a name and a username (3-32 letters, numbers, dots or dashes).")
+                elif p1 != p2:
+                    st.error("Passwords do not match.")
+                elif pw_problem(p1):
+                    st.error(pw_problem(p1))
+                else:
+                    save_users({un: new_user_record(un, nm.strip(), ROLE_ADMIN, [], p1, False, "setup")})
+                    st.success("Administrator created. You can sign in now.")
+            return
+        st.markdown("### 🔐 Sign in")
+        with st.form("login"):
+            u = st.text_input("👤 Username")
+            p = st.text_input("🔑 Password", type="password")
+            go = st.form_submit_button("🔓 Sign in", type="primary", use_container_width=True)
+        if go:
+            msg = try_login(u, p)
+            if msg:
+                st.error(msg)
+            else:
+                st.rerun()
+        st.caption("Forgot your password? Ask a Knowledge Lens administrator to reset it.")
+
+
+def render_force_change(me):
+    auth_header("Please set a new password before continuing.")
+    _, mid, _ = st.columns([1, 1.2, 1])
+    with mid, st.container(border=True):
+        st.markdown("### 🔑 Set a new password")
+        with st.form("force_pw"):
+            p1 = st.text_input("New password", type="password")
+            p2 = st.text_input("Confirm new password", type="password")
+            go = st.form_submit_button("Save and continue", type="primary", use_container_width=True)
+        if go:
+            if p1 != p2:
+                st.error("Passwords do not match.")
+            elif pw_problem(p1):
+                st.error(pw_problem(p1))
+            else:
+                users = load_users()
+                if check_pw(p1, users[me["username"]]["salt"], users[me["username"]]["hash"]):
+                    st.error("Choose a password different from the temporary one.")
+                else:
+                    users[me["username"]]["salt"], users[me["username"]]["hash"] = hash_pw(p1)
+                    users[me["username"]]["must_change"] = False
+                    save_users(users)
+                    audit("password_change", forced=True)
+                    st.rerun()
+        st.button("Cancel and sign out", on_click=lambda: ss_.clear())
+
+
+# ---- gate: nobody sees anything before signing in --------------------------------
+ensure_bootstrap_admin()
+ss_.setdefault("auth", None)
+if ss_.auth is None:
+    render_login()
+    st.stop()
+_me = load_users().get(ss_.auth)
+if not _me or not _me["active"]:
+    ss_.clear()
+    st.rerun()
+ss_.user = {"name": _me["name"], "username": _me["username"], "role": _me["role"], "modules": _me["modules"],
+            "admin": _me["role"] == ROLE_ADMIN}
+if _me["must_change"]:
+    render_force_change(_me)
+    st.stop()
+
+
+def logout():
+    audit("logout")
+    ss_.clear()
+
+
 with st.sidebar:
-    st.markdown("### 👤 Session")
-    uname = st.text_input("Your name", "Nadeem Sohail")
-    ugroups = st.multiselect("Access groups", GROUPS, default=["Pre-Sales"],
-                             help="Demo only. In production these come from SSO / Azure AD groups.")
-    admin_pw = st.secrets.get("ADMIN_PASSWORD")
-    is_admin = False
-    if st.checkbox("Admin mode"):
-        is_admin = admin_pw is None or st.text_input("Admin password", type="password") == admin_pw
-        if admin_pw is None:
-            st.caption("Set ADMIN_PASSWORD in secrets to protect admin mode.")
-    ss_.user = {"name": uname, "groups": ugroups, "admin": is_admin}
+    role = ss_.user["role"]
+    st.markdown("### 👤 Account")
+    st.markdown(f"**{esc(_me['name'])}**  \n{ROLES[role]['icon']} {role}")
+    if role == ROLE_CONS:
+        st.caption("📚 Modules: " + (", ".join(module_label(m) for m in _me["modules"]) or "none assigned - ask an admin"))
+    elif role == ROLE_MPO:
+        st.caption("Full view of all documents")
+    with st.expander("🔑 Change password"):
+        cur = st.text_input("Current password", type="password", key="cp_cur")
+        n1 = st.text_input("New password", type="password", key="cp_new")
+        n2 = st.text_input("Confirm new password", type="password", key="cp_new2")
+        if st.button("Update password", key="cp_go"):
+            users = load_users()
+            me_ = users[ss_.auth]
+            if not check_pw(cur, me_["salt"], me_["hash"]):
+                st.error("Current password is incorrect.")
+            elif n1 != n2:
+                st.error("New passwords do not match.")
+            elif pw_problem(n1):
+                st.error(pw_problem(n1))
+            else:
+                me_["salt"], me_["hash"] = hash_pw(n1)
+                save_users(users)
+                audit("password_change", forced=False)
+                st.success("Password updated.")
+    st.button("🚪 Log out", on_click=logout, use_container_width=True)
     st.markdown("---")
     st.caption("Answers come only from the sources you tick. Every question, report and upload is written to the audit log.")
 
 
 def can_see(d):
     u = ss_.user
-    return u["admin"] or "All" in d["access"] or bool(set(d["access"]) & set(u["groups"]))
+    if u["role"] in (ROLE_ADMIN, ROLE_MPO):
+        return True
+    if d.get("restricted"):
+        return False
+    return d["meta"].get("sap_module") in u["modules"]
 
 
 def esc(s):
@@ -676,7 +892,7 @@ st.markdown(f"""
 <div class="topbar">
   <div class="logo"><img src="https://tmcltd.com/wp-content/uploads/2025/10/TallyMarks-Consulting-TMC-logo.webp" width="64"></div>
   <div class="titles"><h1>🔍 Knowledge Lens</h1><p>Search TMC project knowledge, select what matters, get cited answers and ready-to-send reports.</p></div>
-  <div class="pills"><span class="pill">📚 {len(visible)} documents</span><span class="pill">☑️ {len(selected_docs)} selected</span><span class="pill">👤 {esc(ss_.user["name"])}</span></div>
+  <div class="pills"><span class="pill">📚 {len(visible)} documents</span><span class="pill">☑️ {len(selected_docs)} selected</span><span class="pill">{ROLES[ss_.user["role"]]["icon"]} {esc(ss_.user["name"])} • {ss_.user["role"]}</span></div>
 </div>""", unsafe_allow_html=True)
 
 tab_ws, tab_admin = st.tabs(["🧭 Workspace", "🛠️ Admin & pilot metrics"])
@@ -758,20 +974,23 @@ with tab_ws:
                 c2.markdown(body, unsafe_allow_html=True)
 
             st.markdown("---")
-            with st.expander("➕ Add documents to the library"):
-                files = st.file_uploader("Files", type=list(EXTRACTORS), accept_multiple_files=True,
-                                         key=f"up_{ss_.up_key}", label_visibility="collapsed")
-                access = st.multiselect("Who can see these?", ["All"] + GROUPS, default=["All"])
-                ok = st.checkbox("I confirm these files are sanitized and approved for Knowledge Lens")
-                if st.button("📤 Add to library", disabled=not (files and ok), use_container_width=True):
-                    for f in files:
-                        with st.spinner(f"Reading and tagging {f.name}…"):
-                            try:
-                                ss_.flash.append(ingest(f, access, tax))
-                            except Exception as e:
-                                ss_.flash.append(("error", f"{f.name}: {e}"))
-                    ss_.up_key += 1
-                    st.rerun()
+            if ROLES[ss_.user["role"]]["upload"]:
+                with st.expander("➕ Add documents to the library"):
+                    files = st.file_uploader("Files", type=list(EXTRACTORS), accept_multiple_files=True,
+                                             key=f"up_{ss_.up_key}", label_visibility="collapsed")
+                    restricted = st.checkbox("🔒 Restricted - visible to Admin and SAP: MPO only")
+                    ok = st.checkbox("I confirm these files are sanitized and approved for Knowledge Lens")
+                    if st.button("📤 Add to library", disabled=not (files and ok), use_container_width=True):
+                        for f in files:
+                            with st.spinner(f"Reading and tagging {f.name}…"):
+                                try:
+                                    ss_.flash.append(ingest(f, restricted, tax))
+                                except Exception as e:
+                                    ss_.flash.append(("error", f"{f.name}: {e}"))
+                        ss_.up_key += 1
+                        st.rerun()
+            else:
+                st.caption("📤 Adding documents is available to the Admin and SAP: MPO roles.")
 
     # ---------------- CENTRE: SUMMARY + CHAT ----------------
     with col_mid:
@@ -891,18 +1110,93 @@ with tab_ws:
                                     f"{'✅' if d['status'] == 'Current' else '⚠️'} **Status:** {d['status']}  \n👤 **Added by:** {esc(d['uploaded_by'])}")
                         if m["summary"]:
                             st.caption(m["summary"])
-                        if d["status"] == "Superseded" and d.get("superseded_by") in by_id:
+                        if d["status"] == "Superseded" and d.get("superseded_by") in by_id and can_see(by_id[d["superseded_by"]]):
                             st.warning(f"Newer version: {by_id[d['superseded_by']]['meta']['doc_title']}")
                         p = Path(d.get("path", ""))
                         if p.exists():
                             st.download_button("⬇️ Download original", p.read_bytes(), file_name=d["name"], key=f"orig_{d['id']}")
+
+# ---- user-management callbacks -------------------------------------------------
+def _msg(kind, text):
+    ss_.setdefault("user_msgs", []).append((kind, text))
+
+
+def _active_admins(users):
+    return [k for k, v in users.items() if v["role"] == ROLE_ADMIN and v["active"]]
+
+
+def cb_create_user():
+    users = load_users()
+    name, un = ss_.get("nu_name", "").strip(), ss_.get("nu_user", "").strip().lower()
+    role, pw = ss_.get("nu_role", ROLE_CONS), ss_.get("nu_pw", "")
+    mods = ss_.get("nu_mods", []) if role == ROLE_CONS else []
+    if not name or not un:
+        return _msg("error", "Enter the person's full name and a username.")
+    if not re.fullmatch(r"[a-z0-9._-]{3,32}", un):
+        return _msg("error", "Username must be 3-32 characters: lowercase letters, numbers, dot, dash or underscore.")
+    if un in users:
+        return _msg("error", f"The username “{un}” already exists.")
+    if pw_problem(pw):
+        return _msg("error", pw_problem(pw))
+    if role == ROLE_CONS and not mods:
+        return _msg("error", "Select at least one SAP module, otherwise the consultant would see no documents.")
+    users[un] = new_user_record(un, name, role, mods, pw, True, ss_.user["username"])
+    save_users(users)
+    audit("user_create", target=un, role=role, modules=mods)
+    ss_.shown_pw = (un, pw)
+    _msg("success", f"✅ User {name} ({un}) created as {role}.")
+    for k in ("nu_name", "nu_user", "nu_pw"):
+        ss_[k] = ""
+    ss_["nu_mods"] = []
+
+
+def cb_save_user(sel):
+    users = load_users()
+    u = users[sel]
+    role, active = ss_[f"mu_role_{sel}"], ss_[f"mu_active_{sel}"]
+    mods = ss_.get(f"mu_mods_{sel}", []) if role == ROLE_CONS else []
+    if sel == ss_.user["username"] and (role != ROLE_ADMIN or not active):
+        return _msg("error", "You cannot remove your own admin role or disable your own account.")
+    before = u.copy()
+    u.update(name=ss_[f"mu_name_{sel}"].strip() or u["name"], role=role, modules=mods, active=active)
+    if not _active_admins(users):
+        return _msg("error", "At least one active Admin must remain.")
+    if active and not before["active"]:
+        u.update(fails=0, locked_until=0)
+    save_users(users)
+    audit("user_update", target=sel, role=role, modules=mods, active=active)
+    _msg("success", f"💾 Saved changes for {sel}.")
+
+
+def cb_reset_pw(sel):
+    users = load_users()
+    pw = gen_password()
+    users[sel]["salt"], users[sel]["hash"] = hash_pw(pw)
+    users[sel].update(must_change=True, fails=0, locked_until=0)
+    save_users(users)
+    audit("password_reset", target=sel)
+    ss_.shown_pw = (sel, pw)
+    _msg("success", f"🔄 Password reset for {sel}.")
+
+
+def cb_delete_user(sel):
+    users = load_users()
+    if sel == ss_.user["username"]:
+        return _msg("error", "You cannot delete your own account.")
+    gone = users.pop(sel)
+    if not _active_admins(users):
+        return _msg("error", "At least one active Admin must remain.")
+    save_users(users)
+    audit("user_delete", target=sel, role=gone["role"])
+    _msg("success", f"🗑️ User {sel} deleted.")
+
 
 # ============================================================================
 # ADMIN & PILOT METRICS
 # ============================================================================
 with tab_admin:
     if not ss_.user["admin"]:
-        st.info("Turn on Admin mode in the sidebar to manage the library, vocabulary and pilot metrics.")
+        st.info("🔒 The admin area is available to the Admin role only.")
     else:
         import pandas as pd
         import altair as alt
@@ -916,122 +1210,186 @@ with tab_admin:
         n_cur = sum(d["status"] == "Current" for d in ss_.library)
         avg_t = f"{sum(r['seconds'] for r in asks) / len(asks):.1f}s" if asks else "-"
         helpful = f"{100 * sum(r['rating'] == 1 for r in fb) / len(fb):.0f}%" if fb else "-"
-        users = ldf["user"].nunique() if len(ldf) else 0
+        n_users = ldf["user"].nunique() if len(ldf) else 0
 
-        st.markdown("#### 📊 Pilot dashboard")
-        kpis = [("📚", "Documents", len(ss_.library), f"{n_cur} current • {len(ss_.library) - n_cur} superseded", "#0F6B45", "#1FA67A"),
-                ("💬", "Questions asked", len(asks), f"{users} active user(s)", "#2563EB", "#3B82F6"),
-                ("🔍", "Searches", n_search, "library searches run", "#7C3AED", "#A78BFA"),
-                ("⏱️", "Avg. answer time", avg_t, "manual baseline ≈ 12 min", "#D97706", "#F2A93B"),
-                ("👍", "Helpful answers", helpful, f"{len(fb)} rating(s) given", "#059669", "#34D399"),
-                ("📝", "Reports generated", n_rep, "Word • PPT • Excel • PDF", "#DC2626", "#F97316")]
-        for c, (ic, lab, val, sub, c1, c2) in zip(st.columns(6), kpis):
-            c.markdown(f'<div class="kpi" style="background:linear-gradient(135deg,{c1},{c2})"><div class="ic">{ic}</div>'
-                       f'<div class="v">{val}</div><div class="l">{lab}</div><div class="s">{sub}</div></div>', unsafe_allow_html=True)
-        st.caption("Compare these with the manual baseline measured in November (search test, summary test).")
+        t_dash, t_users, t_lib, t_vocab, t_audit = st.tabs(["📊 Dashboard", "👥 Users & roles", "📚 Library", "🏷️ Vocabulary", "🧾 Audit log"])
+        with t_dash:
+            st.markdown("#### 📊 Pilot dashboard")
+            kpis = [("📚", "Documents", len(ss_.library), f"{n_cur} current • {len(ss_.library) - n_cur} superseded", "#0F6B45", "#1FA67A"),
+                    ("💬", "Questions asked", len(asks), f"{n_users} active user(s)", "#2563EB", "#3B82F6"),
+                    ("🔍", "Searches", n_search, "library searches run", "#7C3AED", "#A78BFA"),
+                    ("⏱️", "Avg. answer time", avg_t, "manual baseline ≈ 12 min", "#D97706", "#F2A93B"),
+                    ("👍", "Helpful answers", helpful, f"{len(fb)} rating(s) given", "#059669", "#34D399"),
+                    ("📝", "Reports generated", n_rep, "Word • PPT • Excel • PDF", "#DC2626", "#F97316")]
+            for c, (ic, lab, val, sub, c1, c2) in zip(st.columns(6), kpis):
+                c.markdown(f'<div class="kpi" style="background:linear-gradient(135deg,{c1},{c2})"><div class="ic">{ic}</div>'
+                           f'<div class="v">{val}</div><div class="l">{lab}</div><div class="s">{sub}</div></div>', unsafe_allow_html=True)
+            st.caption("Compare these with the manual baseline measured in November (search test, summary test).")
 
-        def donut(rows, colors, title):
-            st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
-            df_ = pd.DataFrame(rows, columns=["label", "count"])
-            df_ = df_[df_["count"] > 0]
-            if df_.empty:
-                st.caption("No data yet.")
-                return
-            ch = alt.Chart(df_).mark_arc(innerRadius=55, outerRadius=100).encode(
-                theta="count:Q", color=alt.Color("label:N", scale=alt.Scale(domain=list(df_["label"]), range=colors[:len(df_)]), legend=alt.Legend(orient="bottom", title=None)),
-                tooltip=["label", "count"]).properties(height=260)
-            st.altair_chart(ch, use_container_width=True)
-
-        def hbar(counter, title, color):
-            st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
-            if not counter:
-                st.caption("No data yet.")
-                return
-            df_ = pd.DataFrame(counter.most_common(8), columns=["label", "count"])
-            ch = alt.Chart(df_).mark_bar(cornerRadiusEnd=5, color=color).encode(
-                x=alt.X("count:Q", title=None, axis=alt.Axis(tickMinStep=1)), y=alt.Y("label:N", sort="-x", title=None), tooltip=["label", "count"]).properties(height=260)
-            st.altair_chart(ch, use_container_width=True)
-
-        r1a, r1b = st.columns([3, 2])
-        with r1a:
-            st.markdown('<div class="chart-title">📈 Activity over time</div>', unsafe_allow_html=True)
-            ACTS = ["search", "ask", "summary", "report", "upload"]
-            act = ldf[ldf["action"].isin(ACTS)].copy() if len(ldf) else ldf
-            if len(act):
-                act["day"] = pd.to_datetime(act["ts"]).dt.floor("D")
-                grp = act.groupby(["day", "action"]).size().reset_index(name="count")
-                ch = alt.Chart(grp).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
-                    x=alt.X("day:T", title=None, axis=alt.Axis(format="%d %b")), y=alt.Y("count:Q", title=None, axis=alt.Axis(tickMinStep=1)),
-                    color=alt.Color("action:N", scale=alt.Scale(domain=ACTS, range=PAL[:5]), legend=alt.Legend(orient="bottom", title=None)),
-                    tooltip=["day:T", "action", "count"]).properties(height=260)
+            def donut(rows, colors, title):
+                st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
+                df_ = pd.DataFrame(rows, columns=["label", "count"])
+                df_ = df_[df_["count"] > 0]
+                if df_.empty:
+                    st.caption("No data yet.")
+                    return
+                ch = alt.Chart(df_).mark_arc(innerRadius=55, outerRadius=100).encode(
+                    theta="count:Q", color=alt.Color("label:N", scale=alt.Scale(domain=list(df_["label"]), range=colors[:len(df_)]), legend=alt.Legend(orient="bottom", title=None)),
+                    tooltip=["label", "count"]).properties(height=260)
                 st.altair_chart(ch, use_container_width=True)
+
+            def hbar(counter, title, color):
+                st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
+                if not counter:
+                    st.caption("No data yet.")
+                    return
+                df_ = pd.DataFrame(counter.most_common(8), columns=["label", "count"])
+                ch = alt.Chart(df_).mark_bar(cornerRadiusEnd=5, color=color).encode(
+                    x=alt.X("count:Q", title=None, axis=alt.Axis(tickMinStep=1)), y=alt.Y("label:N", sort="-x", title=None), tooltip=["label", "count"]).properties(height=260)
+                st.altair_chart(ch, use_container_width=True)
+
+            r1a, r1b = st.columns([3, 2])
+            with r1a:
+                st.markdown('<div class="chart-title">📈 Activity over time</div>', unsafe_allow_html=True)
+                ACTS = ["search", "ask", "summary", "report", "upload"]
+                act = ldf[ldf["action"].isin(ACTS)].copy() if len(ldf) else ldf
+                if len(act):
+                    act["day"] = pd.to_datetime(act["ts"]).dt.floor("D")
+                    grp = act.groupby(["day", "action"]).size().reset_index(name="count")
+                    ch = alt.Chart(grp).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
+                        x=alt.X("day:T", title=None, axis=alt.Axis(format="%d %b")), y=alt.Y("count:Q", title=None, axis=alt.Axis(tickMinStep=1)),
+                        color=alt.Color("action:N", scale=alt.Scale(domain=ACTS, range=PAL[:5]), legend=alt.Legend(orient="bottom", title=None)),
+                        tooltip=["day:T", "action", "count"]).properties(height=260)
+                    st.altair_chart(ch, use_container_width=True)
+                else:
+                    st.caption("No activity yet.")
+            with r1b:
+                up = sum(r["rating"] == 1 for r in fb)
+                down = sum(r["rating"] == -1 for r in fb)
+                donut([("👍 Helpful", up), ("👎 Not helpful", down), ("Not rated", max(len(asks) - len(fb), 0))],
+                      ["#1FA67A", "#E8590C", "#C8CDD6"], "🎯 Answer feedback")
+
+            r2a, r2b, r2c = st.columns(3)
+            with r2a:
+                hbar(Counter(d["meta"]["doc_type"] for d in ss_.library), "📑 Documents by type", PAL[0])
+            with r2b:
+                hbar(Counter(d["meta"]["client"] for d in ss_.library), "🏢 Documents by client", PAL[3])
+            with r2c:
+                donut(list(Counter(d["meta"]["sap_module"] for d in ss_.library).items()), PAL, "🧩 Documents by SAP module")
+
+            r3a, r3b = st.columns([2, 3])
+            with r3a:
+                hbar(Counter(r["query"].lower() for r in log if r["action"] == "search"), "🔎 Top search terms", PAL[2])
+            with r3b:
+                st.markdown('<div class="chart-title">⏱️ Answer time per question (seconds)</div>', unsafe_allow_html=True)
+                if asks:
+                    tdf = pd.DataFrame({"question": range(1, len(asks) + 1), "seconds": [r["seconds"] for r in asks], "text": [r["question"][:60] for r in asks]})
+                    ch = alt.Chart(tdf).mark_area(line={"color": PAL[4]}, color=alt.Gradient(gradient="linear", stops=[alt.GradientStop(color="#F9C9A8", offset=0), alt.GradientStop(color="#FFF3EA", offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(
+                        x=alt.X("question:O", title="Question #"), y=alt.Y("seconds:Q", title=None), tooltip=["question", "seconds", "text"]).properties(height=260)
+                    st.altair_chart(ch + ch.mark_point(color=PAL[4], filled=True, size=70), use_container_width=True)
+                else:
+                    st.caption("Ask a question in the Workspace to see timings.")
+
+        with t_users:
+            users_db = load_users()
+            st.markdown("#### 👥 Users & roles")
+            for c, (rn, rv) in zip(st.columns(3), ROLES.items()):
+                c.markdown(f'<div class="rolecard"><div class="ic">{rv["icon"]}</div><b>{rn}</b><div class="s">{esc(rv["desc"])}</div></div>', unsafe_allow_html=True)
+            st.write("")
+            for kind, msg in ss_.pop("user_msgs", []):
+                getattr(st, kind)(msg)
+            if ss_.get("shown_pw"):
+                su, sp = ss_.pop("shown_pw")
+                st.success(f"🔑 Temporary password for **{su}** (shown once - copy it now and share it securely). The user must change it at first sign-in.")
+                st.code(sp, language=None)
+
+            if users_db:
+                st.dataframe(pd.DataFrame([{
+                    "username": u["username"], "name": u["name"], "role": f"{ROLES[u['role']]['icon']} {u['role']}",
+                    "modules": ", ".join(module_label(m) for m in u["modules"]) if u["role"] == ROLE_CONS else "all documents",
+                    "status": "✅ Active" if u["active"] else "⛔ Disabled",
+                    "password": "⏳ must change" if u["must_change"] else "set",
+                    "last sign-in": u.get("last_login") or "never"} for u in users_db.values()]),
+                    use_container_width=True, hide_index=True)
+
+            st.markdown("##### ➕ Add a person")
+            a1, a2 = st.columns(2)
+            a1.text_input("Full name", key="nu_name")
+            a2.text_input("Username", key="nu_user", help="3-32 characters: lowercase letters, numbers, dot, dash or underscore.")
+            b1, b2 = st.columns(2)
+            nrole = b1.selectbox("Role", list(ROLES), index=2, key="nu_role")
+            if nrole == ROLE_CONS:
+                b2.multiselect("SAP modules this person may access", tax["sap_modules"], format_func=module_label, key="nu_mods")
             else:
-                st.caption("No activity yet.")
-        with r1b:
-            up = sum(r["rating"] == 1 for r in fb)
-            down = sum(r["rating"] == -1 for r in fb)
-            donut([("👍 Helpful", up), ("👎 Not helpful", down), ("Not rated", max(len(asks) - len(fb), 0))],
-                  ["#1FA67A", "#E8590C", "#C8CDD6"], "🎯 Answer feedback")
+                b2.info("This role does not need modules.")
+            p1c, p2c = st.columns([3, 1])
+            p1c.text_input("Temporary password", key="nu_pw", help="Min. 8 characters with letters and numbers. The user must change it at first sign-in.")
+            p2c.write("")
+            p2c.button("🎲 Generate", on_click=lambda: ss_.__setitem__("nu_pw", gen_password()), use_container_width=True)
+            st.button("➕ Create user", type="primary", on_click=cb_create_user)
 
-        r2a, r2b, r2c = st.columns(3)
-        with r2a:
-            hbar(Counter(d["meta"]["doc_type"] for d in ss_.library), "📑 Documents by type", PAL[0])
-        with r2b:
-            hbar(Counter(d["meta"]["client"] for d in ss_.library), "🏢 Documents by client", PAL[3])
-        with r2c:
-            donut(list(Counter(d["meta"]["sap_module"] for d in ss_.library).items()), PAL, "🧩 Documents by SAP module")
+            if users_db:
+                st.markdown("##### ✏️ Manage a person")
+                sel = st.selectbox("Select user", list(users_db), format_func=lambda k: f"{users_db[k]['name']} ({k})", key="mu_sel")
+                u = users_db[sel]
+                m1, m2 = st.columns(2)
+                m1.text_input("Full name", u["name"], key=f"mu_name_{sel}")
+                mrole = m2.selectbox("Role", list(ROLES), index=list(ROLES).index(u["role"]), key=f"mu_role_{sel}")
+                st.multiselect("SAP modules (consultants only)", tax["sap_modules"], default=[m for m in u["modules"] if m in tax["sap_modules"]],
+                               format_func=module_label, key=f"mu_mods_{sel}", disabled=mrole != ROLE_CONS)
+                st.toggle("Account active", value=u["active"], key=f"mu_active_{sel}")
+                x1, x2, x3 = st.columns(3)
+                x1.button("💾 Save changes", on_click=cb_save_user, args=(sel,), use_container_width=True)
+                x2.button("🔄 Reset password", on_click=cb_reset_pw, args=(sel,), use_container_width=True)
+                x3.button("🗑️ Delete user", on_click=cb_delete_user, args=(sel,), use_container_width=True)
+                if u["role"] == ROLE_CONS and not u["modules"]:
+                    st.warning("This consultant has no modules assigned and cannot see any documents.")
 
-        r3a, r3b = st.columns([2, 3])
-        with r3a:
-            hbar(Counter(r["query"].lower() for r in log if r["action"] == "search"), "🔎 Top search terms", PAL[2])
-        with r3b:
-            st.markdown('<div class="chart-title">⏱️ Answer time per question (seconds)</div>', unsafe_allow_html=True)
-            if asks:
-                tdf = pd.DataFrame({"question": range(1, len(asks) + 1), "seconds": [r["seconds"] for r in asks], "text": [r["question"][:60] for r in asks]})
-                ch = alt.Chart(tdf).mark_area(line={"color": PAL[4]}, color=alt.Gradient(gradient="linear", stops=[alt.GradientStop(color="#F9C9A8", offset=0), alt.GradientStop(color="#FFF3EA", offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(
-                    x=alt.X("question:O", title="Question #"), y=alt.Y("seconds:Q", title=None), tooltip=["question", "seconds", "text"]).properties(height=260)
-                st.altair_chart(ch + ch.mark_point(color=PAL[4], filled=True, size=70), use_container_width=True)
-            else:
-                st.caption("Ask a question in the Workspace to see timings.")
+        with t_lib:
+            st.markdown("#### Library")
+            if ss_.library:
+                df = pd.DataFrame([{"id": d["id"], "title": d["meta"]["doc_title"], "file": d["name"], "client": d["meta"]["client"],
+                                    "type": d["meta"]["doc_type"], "module": d["meta"]["sap_module"], "phase": d["meta"]["phase"],
+                                    "status": d["status"], "restricted": "🔒" if d.get("restricted") else "", "added by": d["uploaded_by"]} for d in ss_.library])
+                st.dataframe(df, use_container_width=True, hide_index=True)
+                pick = st.selectbox("Manage a document", [d["id"] for d in ss_.library], format_func=lambda i: by_id[i]["meta"]["doc_title"])
+                d = by_id[pick]
+                a1, a2, a3 = st.columns(3)
+                if a1.button("Mark as current", use_container_width=True):
+                    d["status"], d["superseded_by"] = "Current", None
+                    save_library(); audit("status", doc=d["name"], status="Current"); st.rerun()
+                if a2.button("Mark as superseded", use_container_width=True):
+                    d["status"] = "Superseded"
+                    save_library(); audit("status", doc=d["name"], status="Superseded"); st.rerun()
+                if a3.button("Delete document", use_container_width=True):
+                    ss_.library = [x for x in ss_.library if x["id"] != pick]
+                    ss_.selected.discard(pick)
+                    Path(d.get("path", "")).unlink(missing_ok=True)
+                    save_library(); audit("delete", doc=d["name"]); st.rerun()
+                v1, v2 = st.columns(2)
+                restr = v1.checkbox("🔒 Restricted (Admin and SAP: MPO only)", value=d.get("restricted", False), key=f"restr_{pick}")
+                mods = tax["sap_modules"]
+                cur_mod = d["meta"]["sap_module"]
+                mod = v2.selectbox("🧩 SAP module (controls consultant access)", mods, index=mods.index(cur_mod) if cur_mod in mods else 0, key=f"mod_{pick}")
+                if st.button("💾 Save visibility"):
+                    d["restricted"], d["meta"]["sap_module"] = restr, mod
+                    save_library(); audit("visibility", doc=d["name"], restricted=restr, module=mod); st.rerun()
 
-        st.markdown("#### Library")
-        if ss_.library:
-            df = pd.DataFrame([{"id": d["id"], "title": d["meta"]["doc_title"], "file": d["name"], "client": d["meta"]["client"],
-                                "type": d["meta"]["doc_type"], "module": d["meta"]["sap_module"], "phase": d["meta"]["phase"],
-                                "status": d["status"], "access": ", ".join(d["access"]), "added by": d["uploaded_by"]} for d in ss_.library])
-            st.dataframe(df, use_container_width=True, hide_index=True)
-            pick = st.selectbox("Manage a document", [d["id"] for d in ss_.library], format_func=lambda i: by_id[i]["meta"]["doc_title"])
-            d = by_id[pick]
-            a1, a2, a3 = st.columns(3)
-            if a1.button("Mark as current", use_container_width=True):
-                d["status"], d["superseded_by"] = "Current", None
-                save_library(); audit("status", doc=d["name"], status="Current"); st.rerun()
-            if a2.button("Mark as superseded", use_container_width=True):
-                d["status"] = "Superseded"
-                save_library(); audit("status", doc=d["name"], status="Superseded"); st.rerun()
-            if a3.button("Delete document", use_container_width=True):
-                ss_.library = [x for x in ss_.library if x["id"] != pick]
-                ss_.selected.discard(pick)
-                Path(d.get("path", "")).unlink(missing_ok=True)
-                save_library(); audit("delete", doc=d["name"]); st.rerun()
-            new_access = st.multiselect("Access for this document", ["All"] + GROUPS, default=d["access"], key=f"acc_{pick}")
-            if st.button("Save access") and new_access:
-                d["access"] = new_access
-                save_library(); audit("access", doc=d["name"], access=new_access); st.rerun()
+        with t_vocab:
+            st.markdown("#### Controlled vocabulary")
+            st.caption("Client aliases map variants (TML, Tata Motors Ltd) to one record. The glossary expands TMC terms in searches.")
+            txt = st.text_area("taxonomy.json", json.dumps(tax, indent=2, ensure_ascii=False), height=300)
+            if st.button("Save vocabulary"):
+                try:
+                    t = json.loads(txt)
+                    assert all(k in t for k in DEFAULT_TAXONOMY)
+                    save_taxonomy(t); audit("taxonomy_update"); st.success("Saved.")
+                except Exception as e:
+                    st.error(f"Invalid vocabulary: {e}")
 
-        st.markdown("#### Controlled vocabulary")
-        st.caption("Client aliases map variants (TML, Tata Motors Ltd) to one record. The glossary expands TMC terms in searches.")
-        txt = st.text_area("taxonomy.json", json.dumps(tax, indent=2, ensure_ascii=False), height=300)
-        if st.button("Save vocabulary"):
-            try:
-                t = json.loads(txt)
-                assert all(k in t for k in DEFAULT_TAXONOMY)
-                save_taxonomy(t); audit("taxonomy_update"); st.success("Saved.")
-            except Exception as e:
-                st.error(f"Invalid vocabulary: {e}")
-
-        st.markdown("#### Audit log")
-        if log:
-            ldf = pd.DataFrame(log).tail(300).iloc[::-1]
-            st.dataframe(ldf, use_container_width=True, hide_index=True)
-            st.download_button("Download audit log (CSV)", pd.DataFrame(log).to_csv(index=False), file_name="audit_log.csv")
+        with t_audit:
+            st.markdown("#### Audit log")
+            if log:
+                ldf = pd.DataFrame(log).tail(300).iloc[::-1]
+                st.dataframe(ldf, use_container_width=True, hide_index=True)
+                st.download_button("Download audit log (CSV)", pd.DataFrame(log).to_csv(index=False), file_name="audit_log.csv")
