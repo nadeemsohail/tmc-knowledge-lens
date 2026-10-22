@@ -1,9 +1,5 @@
 """
 TMC Knowledge Lens - search-first, permission-aware document workspace.
-
-Flow:  Search the library  ->  matching documents appear in Sources (left)
-       ->  tick the ones you want  ->  summarise / ask cited questions (centre)
-       ->  generate a report as Word, PowerPoint, Excel or PDF (right).
 """
 import streamlit as st
 from openai import OpenAI
@@ -72,7 +68,7 @@ REPORT_TYPES = {
 }
 
 # ----------------------------------------------------------------------------
-# Styling - search-first workspace, deliberately not a NotebookLM copy
+# Styling
 # ----------------------------------------------------------------------------
 st.markdown("""
 <style>
@@ -144,27 +140,42 @@ def parse_json(raw):
 # ----------------------------------------------------------------------------
 def load_taxonomy():
     p = DATA / "taxonomy.json"
-    return json.loads(p.read_text("utf-8")) if p.exists() else DEFAULT_TAXONOMY
+    try:
+        return json.loads(p.read_text("utf-8")) if p.exists() else DEFAULT_TAXONOMY
+    except Exception:
+        return DEFAULT_TAXONOMY
 
 
 def save_taxonomy(t):
-    (DATA / "taxonomy.json").write_text(json.dumps(t, indent=2, ensure_ascii=False), "utf-8")
+    try:
+        (DATA / "taxonomy.json").write_text(json.dumps(t, indent=2, ensure_ascii=False), "utf-8")
+    except Exception:
+        pass
 
 
 def load_library():
     p = DATA / "library.json"
-    return json.loads(p.read_text("utf-8")) if p.exists() else []
+    try:
+        return json.loads(p.read_text("utf-8")) if p.exists() else []
+    except Exception:
+        return []
 
 
 def save_library():
-    (DATA / "library.json").write_text(json.dumps(st.session_state.library, ensure_ascii=False), "utf-8")
+    try:
+        (DATA / "library.json").write_text(json.dumps(st.session_state.library, ensure_ascii=False), "utf-8")
+    except Exception:
+        pass
 
 
 def audit(action, **detail):
     u = st.session_state.get("user") or {"name": "anonymous"}
     row = {"ts": datetime.now().isoformat(timespec="seconds"), "user": u.get("username", u["name"]), "action": action, **detail}
-    with open(DATA / "audit.jsonl", "a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    try:
+        with open(DATA / "audit.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 
 
 def read_audit():
@@ -172,16 +183,19 @@ def read_audit():
     if not p.exists():
         return []
     out = []
-    for line in p.read_text("utf-8").splitlines():
-        try:
-            out.append(json.loads(line))
-        except Exception:
-            pass
+    try:
+        for line in p.read_text("utf-8").splitlines():
+            try:
+                out.append(json.loads(line))
+            except Exception:
+                pass
+    except Exception:
+        pass
     return out
 
 
 # ----------------------------------------------------------------------------
-# Text extraction (returns pages, author, unit-name)
+# Text extraction
 # ----------------------------------------------------------------------------
 def chunk_text(text, size=2500):
     pages, cur = [], ""
@@ -235,10 +249,8 @@ def extract_txt(b):
 
 EXTRACTORS = {"pdf": extract_pdf, "docx": extract_docx, "pptx": extract_pptx, "xlsx": extract_xlsx, "txt": extract_txt, "md": extract_txt}
 
-# <<RETRIEVAL>>
 # ----------------------------------------------------------------------------
-# Retrieval (BM25 + controlled-vocabulary query expansion). Swap for embeddings
-# + a vector DB (pgvector / Azure AI Search) when the library grows.
+# Retrieval
 # ----------------------------------------------------------------------------
 STOP = set("the a an and or of to in for on with is are was were be by as at from that this it its".split())
 
@@ -321,14 +333,13 @@ def retrieve(query, docs, tax, k=8):
     order = sorted(range(len(chunks)), key=lambda i: -sc[i])
     pick = [i for i in order[:k] if sc[i] > 0]
     have = {chunks[i][0]["id"] for i in pick}
-    for d in docs:                      # make sure every selected document is represented
+    for d in docs:
         if d["id"] not in have:
             cand = [i for i in order if chunks[i][0]["id"] == d["id"]]
             if cand:
                 pick.append(cand[0])
     return [{"doc_id": chunks[i][0]["id"], "doc_title": chunks[i][0]["meta"]["doc_title"],
              "unit": chunks[i][0]["unit"], "page": chunks[i][1], "text": chunks[i][2]} for i in pick]
-# <<END RETRIEVAL>>
 
 
 def sample_text(d, budget):
@@ -424,18 +435,20 @@ def ingest(file, restricted, tax):
         else:
             doc["status"], doc["superseded_by"] = "Superseded", other["id"]
             note = f" A newer version already exists (“{other['meta']['doc_title']}”)."
-    path = DATA / "files" / f"{doc['id']}_{re.sub(r'[^A-Za-z0-9._-]', '_', file.name)}"
-    path.write_bytes(raw)
-    doc["path"] = str(path)
+    try:
+        path = DATA / "files" / f"{doc['id']}_{re.sub(r'[^A-Za-z0-9._-]', '_', file.name)}"
+        path.write_bytes(raw)
+        doc["path"] = str(path)
+    except Exception:
+        doc["path"] = ""
     st.session_state.library.append(doc)
     save_library()
     audit("upload", doc=doc["name"], restricted=doc["restricted"])
     return "success", f"Added “{meta['doc_title']}” ({meta['doc_type']}, {meta['client']}).{note}"
 
 
-# <<EXPORTS>>
 # ----------------------------------------------------------------------------
-# Report export: Word, PowerPoint, Excel, PDF
+# Exports
 # ----------------------------------------------------------------------------
 def norm_report(r, fallback):
     secs = [{"heading": str(s.get("heading", "")), "bullets": [str(b) for b in s.get("bullets", [])]}
@@ -548,26 +561,25 @@ def build_xlsx(r):
 
 def build_pdf(r):
     ss = getSampleStyleSheet()
-    esc = lambda s: xml_escape(s).encode("latin-1", "replace").decode("latin-1")
-    story = [Paragraph(esc(r["title"]), ss["Title"]),
+    esc_ = lambda s: xml_escape(s).encode("latin-1", "replace").decode("latin-1")
+    story = [Paragraph(esc_(r["title"]), ss["Title"]),
              Paragraph(f"Generated by TMC Knowledge Lens • {datetime.now():%d %b %Y}", ss["Italic"]), Spacer(1, 12),
-             Paragraph("Executive summary", ss["Heading2"]), Paragraph(esc(r["executive_summary"]), ss["BodyText"])]
+             Paragraph("Executive summary", ss["Heading2"]), Paragraph(esc_(r["executive_summary"]), ss["BodyText"])]
     for s in r["sections"]:
-        story.append(Paragraph(esc(s["heading"]), ss["Heading2"]))
-        story += [Paragraph("• " + esc(b), ss["BodyText"]) for b in s["bullets"]]
+        story.append(Paragraph(esc_(s["heading"]), ss["Heading2"]))
+        story += [Paragraph("• " + esc_(b), ss["BodyText"]) for b in s["bullets"]]
     if r["table"]:
-        data = [[Paragraph(f"<b>{esc(c)}</b>", ss["BodyText"]) for c in r["table"]["columns"]]]
-        data += [[Paragraph(esc(v), ss["BodyText"]) for v in row] for row in r["table"]["rows"]]
+        data = [[Paragraph(f"<b>{esc_(c)}</b>", ss["BodyText"]) for c in r["table"]["columns"]]]
+        data += [[Paragraph(esc_(v), ss["BodyText"]) for v in row] for row in r["table"]["rows"]]
         t = Table(data, repeatRows=1)
         t.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#D5EDE0")),
                                ("VALIGN", (0, 0), (-1, -1), "TOP")]))
         story += [Spacer(1, 10), t]
     story.append(Paragraph("Sources", ss["Heading2"]))
-    story += [Paragraph("• " + esc(s), ss["BodyText"]) for s in r["sources"]]
+    story += [Paragraph("• " + esc_(s), ss["BodyText"]) for s in r["sources"]]
     buf = io.BytesIO()
     SimpleDocTemplate(buf, pagesize=A4, leftMargin=48, rightMargin=48, topMargin=48, bottomMargin=48).build(story)
     return buf.getvalue()
-# <<END EXPORTS>>
 
 
 # ----------------------------------------------------------------------------
@@ -613,7 +625,7 @@ def make_report(rtype, focus, docs, tax):
 
 
 # ----------------------------------------------------------------------------
-# Session state + sidebar (demo identity; replace with SSO in production)
+# Session state
 # ----------------------------------------------------------------------------
 ss_ = st.session_state
 ss_.setdefault("library", load_library())
@@ -636,11 +648,17 @@ def esc(s):
 
 def load_users():
     p = DATA / "users.json"
-    return json.loads(p.read_text("utf-8")) if p.exists() else {}
+    try:
+        return json.loads(p.read_text("utf-8")) if p.exists() else {}
+    except Exception:
+        return {}
 
 
 def save_users(u):
-    (DATA / "users.json").write_text(json.dumps(u, indent=2, ensure_ascii=False), "utf-8")
+    try:
+        (DATA / "users.json").write_text(json.dumps(u, indent=2, ensure_ascii=False), "utf-8")
+    except Exception:
+        pass
 
 
 def hash_pw(pw, salt=None):
@@ -676,7 +694,7 @@ def new_user_record(username, name, role, modules, password, must_change, by):
 
 def ensure_bootstrap_admin():
     """Admin account defined in app secrets (ADMIN_USERNAME / ADMIN_PASSWORD). Re-created if the user file is lost."""
-    pw = st.secrets.get("Paklag@2026")
+    pw = st.secrets.get("ADMIN_PASSWORD")
     if not pw:
         return
     un = str(st.secrets.get("ADMIN_USERNAME", "nadeem.sohail")).strip().lower()
@@ -690,7 +708,7 @@ def try_login(username, password):
     users, un, now = load_users(), username.strip().lower(), time.time()
     u = users.get(un)
     if not u or not u["active"]:
-        hash_pw(password or "x")                      # keep timing similar
+        hash_pw(password or "x")
         audit("login_failed", username=un)
         return "Invalid username or password."
     if u.get("locked_until", 0) > now:
@@ -966,7 +984,7 @@ with tab_ws:
                 c1, c2 = st.columns([1, 9])
                 c1.checkbox("select", key=key, on_change=toggle, args=(d["id"],), label_visibility="collapsed")
                 badge = '<span class="chip ok">✅ Current</span>' if d["status"] == "Current" else '<span class="chip old">⚠️ Superseded</span>'
-                body = f'<div class="doc-title">{esc(m["doc_title"])}</div>{badge}{chip('📑 ' + m["doc_type"], "p")}{chip('🏢 ' + m["client"])}{chip('🧩 ' + m["sap_module"])}{chip('🪜 ' + m["phase"])}'
+                body = f'<div class="doc-title">{esc(m["doc_title"])}</div>{badge}{chip("📑 " + m["doc_type"], "p")}{chip("🏢 " + m["client"])}{chip("🧩 " + m["sap_module"])}{chip("🪜 " + m["phase"])}'
                 if it["rel"] is not None:
                     body += f'<div class="relbar"><div style="width:{it["rel"]}%"></div></div><div class="small">🎯 Relevance {it["rel"]}%' + (f' • 📍 {d["unit"]} {it["page"]}' if it["page"] else "") + "</div>"
                     if it["snippet"]:
@@ -1031,10 +1049,10 @@ with tab_ws:
                 try:
                     ans, cites = answer_question(prompt, selected_docs, tax)
                     sec = round(time.time() - t0, 1)
-                   ss_.chat.append({"q": prompt, "a": ans, "cites": cites, "seconds": sec, "rating": None, "uid": str(uuid.uuid4())})
+                    ss_.chat.append({"q": prompt, "a": ans, "cites": cites, "seconds": sec, "rating": None, "uid": str(uuid.uuid4())})
                     audit("ask", question=prompt, seconds=sec, docs=len(selected_docs))
                 except Exception as e:
-                    ss_.chat.append({"q": prompt, "a": f"Sorry, the question failed: {e}", "cites": [], "seconds": 0, "rating": 0})
+                    ss_.chat.append({"q": prompt, "a": f"Sorry, the question failed: {e}", "cites": [], "seconds": 0, "rating": 0, "uid": str(uuid.uuid4())})
             with chat_box:
                 if not ss_.chat:
                     st.caption("Answers include citations like [S1] that point to the document and page.")
@@ -1048,12 +1066,9 @@ with tab_ws:
                                 for x in c["cites"]:
                                     st.markdown(f"**[S{x['n']}] {x['title']}** - {x['loc']}")
                                     st.caption(x["snippet"])
-                                             if c["rating"] is None:
+                        if c["rating"] is None:
                             r1, r2, _ = st.columns([1, 1, 6])
-                            # Use the unique ID to prevent StreamlitDuplicateElementKey
                             unique_id = c.get("uid", str(uuid.uuid4()))
-                            if "uid" not in c:
-                                c["uid"] = unique_id
                             r1.button("👍", key=f"fb_up_{i}_{unique_id}", on_click=rate, args=(i, 1))
                             r2.button("👎", key=f"fb_dn_{i}_{unique_id}", on_click=rate, args=(i, -1))
                         elif c["rating"] != 0:
