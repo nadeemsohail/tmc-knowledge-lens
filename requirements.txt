@@ -1,6 +1,8 @@
-streamlit
+streamlit>=1.37
 openai
 pypdf
 python-docx
 python-pptx
-langchain-text-splitters
+openpyxl
+reportlab
+pandas
