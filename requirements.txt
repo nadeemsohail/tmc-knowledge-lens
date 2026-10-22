@@ -6,3 +6,5 @@ python-pptx
 openpyxl
 reportlab
 pandas
+numpy
+fastembed
