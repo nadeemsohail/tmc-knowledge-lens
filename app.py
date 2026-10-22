@@ -1,6 +1,5 @@
 """
 TMC Knowledge Lens - Production Workspace
-UI/UX: Custom Search Bar, Navigation Menu, Footer, detailed Info Pages.
 """
 import streamlit as st
 from openai import OpenAI
@@ -557,7 +556,7 @@ def make_report(rtype, focus, docs, tax):
     return {"data": r, "stem": re.sub(r"[^A-Za-z0-9]+", "_", r["title"])[:50] or "report", "files": {"docx": build_docx(r), "pptx": build_pptx(r), "xlsx": build_xlsx(r), "pdf": build_pdf(r)}}
 
 # ----------------------------------------------------------------------------
-# Session State & Auth
+# Session State & Auth (Fixed Loading Loop)
 # ----------------------------------------------------------------------------
 ss_ = st.session_state
 for k, v in {"library": load_library(), "selected": set(), "results": None, "chat": [], "summary": None, "report": None, "flash": [], "up_key": 0, "rfp_key": 0}.items():
@@ -636,34 +635,19 @@ def render_login():
             else: st.rerun()
         st.caption("Forgot your password? Ask a Knowledge Lens administrator to reset it.")
 
-def render_force_change(me):
-    auth_header("Please set a new password before continuing.")
-    _, mid, _ = st.columns([1, 1.2, 1])
-    with mid, st.container(border=True):
-        st.markdown("### 🔑 Set a new password")
-        with st.form("force_pw"):
-            p1 = st.text_input("New password", type="password"); p2 = st.text_input("Confirm new password", type="password")
-            go = st.form_submit_button("Save and continue", type="primary", use_container_width=True)
-        if go:
-            if p1 != p2: st.error("Passwords do not match.")
-            elif pw_problem(p1): st.error(pw_problem(p1))
-            else:
-                users = load_users()
-                if check_pw(p1, users[me["username"]]["salt"], users[me["username"]]["hash"]): st.error("Choose a password different from the temporary one.")
-                else:
-                    users[me["username"]]["salt"], users[me["username"]]["hash"] = hash_pw(p1)
-                    users[me["username"]]["must_change"] = False
-                    save_users(users); audit("password_change", forced=True); st.rerun()
-        st.button("Cancel and sign out", on_click=lambda: ss_.clear())
-
 # --- Gate ---
 ensure_bootstrap_admin()
-ss_.setdefault("auth", None)
-if ss_.auth is None: render_login(); st.stop()
+if "auth" not in ss_ or ss_.auth is None:
+    render_login()
+    st.stop()
+
 _me = load_users().get(ss_.auth)
-if not _me or not _me["active"]: ss_.clear(); st.rerun()
+if not _me or not _me["active"]:
+    ss_.clear()
+    render_login()
+    st.stop()
+
 ss_.user = {"name": _me["name"], "username": _me["username"], "role": _me["role"], "modules": _me["modules"], "admin": _me["role"] == ROLE_ADMIN}
-if _me["must_change"]: render_force_change(_me); st.stop()
 
 def logout(): audit("logout"); ss_.clear()
 
@@ -734,7 +718,6 @@ st.markdown(f"""
   <div class="pills"><span class="pill">📚 {len(visible)} documents</span><span class="pill">☑️ {len(selected_docs)} selected</span><span class="pill">{ROLES[ss_.user["role"]]["icon"]} {esc(ss_.user["name"])}</span></div>
 </div>""", unsafe_allow_html=True)
 
-# Tabs instead of just Workspace and Admin
 menu_tabs = ["🧭 Workspace", "🛠️ Admin", "📊 Pilot Metrics", "⚙️ Production System Tech", "💡 System Features", "📖 How to Use", "📞 Contact Us"]
 if not ss_.user["admin"]:
     menu_tabs = ["🧭 Workspace", "⚙️ Production System Tech", "💡 System Features", "📖 How to Use", "📞 Contact Us"]
@@ -754,15 +737,9 @@ with tabs[0]:
             for kind, msg in ss_.flash: getattr(st, kind)(msg)
             ss_.flash = []
 
-            # CUSTOM SEARCH BAR (Like the screenshot)
-            with st.form("search_form"):
-                q = st.text_input("Search", placeholder="Ask a question or create something", label_visibility="collapsed")
-                c1, c2 = st.columns([8, 2])
-                with c1:
-                    go = st.form_submit_button("Search", use_container_width=True, type="primary")
-                with c2:
-                    st.markdown(f"<div style='text-align: right; color: #888; font-size: 0.8rem; padding-top: 10px;'>{len(selected_docs)} sources</div>", unsafe_allow_html=True)
-
+            # CUSTOM SEARCH BAR (No Form loop)
+            q = st.text_input("Search", placeholder="Ask a question or create something", label_visibility="collapsed", key="main_search")
+            
             with st.expander("🎚️ Filters"):
                 f_client = st.multiselect("🏢 Client", sorted({d["meta"]["client"] for d in visible}), key="f_client")
                 f_type = st.multiselect("📑 Document type", sorted({d["meta"]["doc_type"] for d in visible}), key="f_type")
@@ -776,11 +753,12 @@ with tabs[0]:
                         and (not f_mod or m["sap_module"] in f_mod) and (not f_phase or m["phase"] in f_phase) and (f_old or d["status"] == "Current"))
 
             candidates = [d for d in visible if passes(d)]
-            if go:
-                if q.strip():
-                    t0 = time.time(); ss_.results = {"label": f"Results for “{q.strip()}”", "items": search_docs(q, visible, tax, VS)}
-                    audit("search", query=q.strip(), hits=len(ss_.results["items"]), seconds=round(time.time() - t0, 2))
-                else: ss_.results = None
+            
+            # Search logic triggers automatically on typing (live search)
+            if q.strip():
+                ss_.results = {"label": f"Results for “{q.strip()}”", "items": search_docs(q, visible, tax, VS)}
+            else:
+                ss_.results = None
 
             allowed = {d["id"] for d in candidates}
             if ss_.results:
@@ -936,7 +914,6 @@ if len(tabs) > 1:
         else:
             t_users, t_lib, t_vocab, t_store, t_audit = st.tabs(["👥 Users & roles", "📚 Library", "🏷️ Vocabulary", "💾 Storage & search index", "🧾 Audit log"])
             
-            # --- USER MANAGEMENT CALLBACKS ---
             def _msg(kind, text): ss_.setdefault("user_msgs", []).append((kind, text))
             def _active_admins(users): return [k for k, v in users.items() if v["role"] == ROLE_ADMIN and v["active"]]
             def cb_create_user():
@@ -1124,11 +1101,11 @@ if len(tabs) > 2:
                 else: st.caption("Ask a question in the Workspace to see timings.")
 
 # ============================================================================
-# TAB 4, 5, 6, 7: INFO PAGES
+# INFO PAGES (Tabs 4, 5, 6, 7)
 # ============================================================================
 idx = 3 if ss_.user["admin"] else 1
 
-with tabs[idx]: # Production System Tech
+with tabs[idx]:
     st.markdown("### ⚙️ Production System Technology")
     st.info("This app is built for enterprise-grade deployment, prioritising security, data privacy, and robust performance.")
     st.markdown("""
@@ -1148,7 +1125,7 @@ with tabs[idx]: # Production System Tech
     - **Precision@3:** ≥ 90% (The correct answer is in the top 3 citations 9 out of 10 times).
     """)
 
-with tabs[idx+1]: # System Features
+with tabs[idx+1]:
     st.markdown("### 💡 System Features")
     st.markdown("""
     **Knowledge Lens** is an advanced, AI-driven document workspace designed specifically for SAP consultancy. 
@@ -1170,7 +1147,7 @@ with tabs[idx+1]: # System Features
     We use a combination of **keyword matching** (BM25) and **semantic vector search** (embeddings), fused via Reciprocal Rank Fusion (RRF). This means you find documents even if you don't use the exact same words as the author.
     """)
 
-with tabs[idx+2]: # How to Use
+with tabs[idx+2]:
     st.markdown("### 📖 How to Use Knowledge Lens")
     st.markdown("""
     #### Step 1: Search & Select
@@ -1196,7 +1173,7 @@ with tabs[idx+2]: # How to Use
     - Confirm they are sanitized, and upload. The AI will auto-tag them for you.
     """)
 
-with tabs[idx+3]: # Contact Us
+with tabs[idx+3]:
     st.markdown("### 📞 Contact Us")
     st.info("For support, access requests, or feedback regarding Knowledge Lens, please reach out to the TMC AI team.")
     
