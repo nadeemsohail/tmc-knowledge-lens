@@ -186,6 +186,8 @@ section[data-testid="stSidebar"] .stButton>button:hover { background:#3A4149; bo
 .stepno { display:inline-flex; width:36px; height:36px; border-radius:50%; background:#0F6B45; color:#fff; align-items:center;
           justify-content:center; font-weight:700; margin-bottom:8px; }
 .person { background:#fff; border:1px solid #E3E6EE; border-radius:16px; padding:20px 24px; }
+.person .ct { margin-top:12px; font-size:.95rem; line-height:1.9; }
+.person a { color:#0F6B45; font-weight:600; text-decoration:none; }
 .person .nm { font-size:1.25rem; font-weight:700; color:#0A4F34; } .person .rl { color:#5F6368; margin-top:2px; }
 .cmp { width:100%; border-collapse:collapse; background:#fff; border-radius:14px; overflow:hidden; font-size:.92rem; }
 .cmp th { background:#0F6B45; color:#fff; text-align:left; padding:10px 14px; }
@@ -1262,6 +1264,18 @@ def report_preview(rp: dict) -> None:
 # ----------------------------------------------------------------------------
 # Static pages (only reachable after sign-in)
 # ----------------------------------------------------------------------------
+def html_table(headers: list, rows: list, widths: list | None = None) -> str:
+    """Static HTML table in the .cmp style. Cells are trusted, hard-coded content."""
+    widths = widths or [None] * len(headers)
+    th = "".join(f'<th style="width:{w}">{h}</th>' if w else f"<th>{h}</th>" for h, w in zip(headers, widths))
+    body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
+    return f'<table class="cmp"><tr>{th}</tr>{body}</table>'
+
+
+def feature_card(title: str, items: list) -> str:
+    return f'<div class="pcard"><h4>{title}</h4><ul>' + "".join(f"<li>{x}</li>" for x in items) + "</ul></div>"
+
+
 def render_about() -> None:
     st.markdown('<div class="hero"><h2>📖 About Knowledge Lens</h2>'
                 '<p><b>Turning TMC’s document archive from a graveyard into a delivery accelerator.</b></p></div>', unsafe_allow_html=True)
@@ -1270,8 +1284,55 @@ def render_about() -> None:
                 'one search away, trustworthy, and ready to reuse on the next engagement, instead of sitting forgotten in a folder.</p></div>', unsafe_allow_html=True)
     c2.markdown('<div class="pcard"><h4>😩 The pain</h4><p>Consultants lose hours hunting for past proposals and reading 60-page blueprints '
                 'just to find one decision. Names differ (TML or Tata Motors Ltd), old drafts look like new ones, and nobody is sure which file is current.</p></div>', unsafe_allow_html=True)
-    c3.markdown('<div class="pcard"><h4>💡 The solution</h4><p>Library-grade AI. Every upload is auto-tagged with client, SAP module, phase and document type, '
+    c3.markdown('<div class="pcard"><h4>💡 The solution</h4><p>Library-grade AI. Every upload is catalogued with client, SAP module, phase and document type, '
                 'versions are tracked, and answers come with citations to the exact page, drawn only from the documents you select.</p></div>', unsafe_allow_html=True)
+
+    st.markdown("#### ✨ What Knowledge Lens does")
+    st.caption("These are the product’s features, independent of the technology underneath. The screens and workflow stay the same as the engine behind them is upgraded.")
+    groups = [
+        ("🗂️ Smart library", ["Upload PDF, Word, PowerPoint, Excel, text and Markdown files",
+                              "Automatic cataloguing: client, industry, SAP module, phase, document type, title, version and a short summary",
+                              "Authority control merges name variants (TML, Tata Motors Ltd) into one client",
+                              "Duplicate detection and version tracking; older versions are marked Superseded",
+                              "Originals stay downloadable; sensitive files can be marked Restricted"]),
+        ("🔍 Search & discovery", ["Ranked results with a relevance score and the best-matching page",
+                                   "Filters by client, document type, SAP module, phase and version status",
+                                   "Understands TMC vocabulary such as RICEFW, Fit-to-Standard, Blueprint and Cutover",
+                                   "Find similar past work: upload an RFP or brief and get the closest past documents",
+                                   "Tick any mix of results to build the working set for the AI"]),
+        ("💬 Ask the documents", ["Chat that answers only from the documents you tick",
+                                  "Every claim cites the document and page, with the source passage one click away",
+                                  "Follow-up questions understood in context, plus one-click questions for risks, timeline, deliverables and comparison",
+                                  "Copy an answer, rate it 👍 or 👎, or clear the chat",
+                                  "Says plainly when the documents do not contain the answer"]),
+        ("📌 Summaries & briefs", ["Project at a glance: overview, key decisions, deliverables, timeline and risks across the selected documents",
+                                   "One-page brief of a single document, downloadable",
+                                   "Warnings when a selected document has a newer version",
+                                   "Built to cut a 60-page blueprint down to a few minutes of reading"]),
+        ("📝 Reports & exports", ["Six report types: Executive summary, Compare documents, Risk & issue register, Decisions & deliverables, Lessons learned, Custom focus",
+                                  "One click produces Word, PowerPoint, Excel and PDF versions with the sources listed",
+                                  "Full-screen preview before you download",
+                                  "Reports use only the documents you selected, with versions and status shown"]),
+        ("🛡️ Governance & insight", ["Three roles: Admin, SAP: MPO and SAP: Consultant; consultants see only their assigned SAP modules",
+                                     "User management: create, edit, reset password, disable or delete, with first-login password change",
+                                     "Login lockout, session timeout and a complete audit log with CSV export",
+                                     "Pilot dashboard: usage, answer time, helpfulness, library mix and estimated time saved",
+                                     "Built-in feedback channel for pilot users"]),
+    ]
+    for row in (groups[:3], groups[3:]):
+        for col, (title, items) in zip(st.columns(3, gap="medium"), row):
+            col.markdown(feature_card(title, items), unsafe_allow_html=True)
+        st.write("")
+
+    st.markdown("#### 🚀 Coming with the production release")
+    st.markdown(feature_card("Same product, bigger engine", [
+        "Search across the entire archive of 200,000+ documents, combining exact keywords with meaning-based matching",
+        "Scanned documents and images read through OCR",
+        "Single sign-on with company accounts and permissions managed centrally",
+        "Bulk import, scheduled re-indexing and connections to document stores such as SharePoint or network drives",
+        "A stronger paid AI model for longer documents, deeper reasoning and richer reports",
+        "See <b>Production Tech</b> for the architecture, server sizing and implementation plan"]), unsafe_allow_html=True)
+
     st.markdown("#### 🏆 The differentiator")
     st.markdown("""
 <table class="cmp">
@@ -1305,28 +1366,126 @@ def render_howto() -> None:
     st.button("🧭 Start in the workspace", on_click=go, args=("Workspace",), type="primary")
 
 
+def gantt(rows: list, total: int = 12) -> str:
+    head = "".join(f'<div style="flex:1;text-align:center;font-size:.72rem;color:#6B7280">W{i}</div>' for i in range(1, total + 1))
+    out = ('<div style="background:#fff;border:1px solid #E3E6EE;border-radius:14px;padding:14px 18px">'
+           f'<div style="display:flex;align-items:center;margin-bottom:6px"><div style="width:34%"></div><div style="flex:1;display:flex">{head}</div></div>')
+    for name, a, b in rows:
+        left, width = (a - 1) / total * 100, (b - a + 1) / total * 100
+        out += (f'<div style="display:flex;align-items:center;margin:7px 0"><div style="width:34%;font-size:.88rem;color:#3B4252;padding-right:10px">{name}</div>'
+                f'<div style="position:relative;flex:1;height:18px;background:#EEF0F6;border-radius:9px">'
+                f'<div style="position:absolute;left:{left:.1f}%;width:{width:.1f}%;height:18px;background:#0F6B45;border-radius:9px"></div></div></div>')
+    return out + "</div>"
+
+
 def render_tech() -> None:
-    st.markdown('<div class="hero"><h2>⚙️ Production technologies</h2><p>Enterprise-grade engineering behind a simple screen.</p></div>', unsafe_allow_html=True)
-    cards = [
-        ("🖥️ Frontend", ["Streamlit (Python)", "Streaming answers, role-aware workspace", "Word, PowerPoint, Excel and PDF export"]),
-        ("🤖 AI model", [f"Groq API, currently <b>{esc(MODEL)}</b>", "Ultra-fast inference; the model is a setting and can be swapped", "Low temperature, answers restricted to the ticked sources"]),
-        ("🔎 Retrieval engine", ["Custom BM25 ranking over document chunks", "Controlled-vocabulary query expansion (clients, SAP terms)", "Every selected document is guaranteed representation"]),
-        ("🔐 Security", ["PBKDF2-SHA256 password hashing, login lockout", f"Session timeout after {SESSION_TTL // 60} minutes idle", "Prompt-injection guardrails (&lt;sources&gt; isolation)",
-                         "Role-based access control by SAP module", "Full audit log"]),
-        ("💾 Storage", ["Atomic JSON writes with thread locking", "Originals stored beside extracted text", "Designed to scale to PostgreSQL and object storage"]),
-        ("📏 Limits & settings", [f"Upload limit: {MAX_UPLOAD_MB} MB per file", f"Manual-search baseline: {BASELINE_MIN:g} min", f"Version {APP_VERSION}"]),
-    ]
-    for row in (cards[:3], cards[3:]):
-        for col, (title, items) in zip(st.columns(3, gap="medium"), row):
-            col.markdown(f'<div class="pcard"><h4>{title}</h4><ul>' + "".join(f"<li>{x}</li>" for x in items) + "</ul></div>", unsafe_allow_html=True)
+    st.markdown('<div class="hero"><h2>⚙️ Production technology & implementation plan</h2>'
+                '<p>From today’s pilot to a production platform for 200,000+ documents. All figures are planning estimates, to be confirmed in the discovery phase.</p></div>',
+                unsafe_allow_html=True)
+    t1, t2, t3, t4 = st.tabs(["🏗️ Pilot → Production", "🧰 Stack & AI model", "🖥️ Servers (Ubuntu)", "🗓️ Implementation plan"])
+
+    with t1:
+        st.markdown(html_table(["Area", "Pilot (today)", "Production target"], [
+            ["Language & code", "Python, one Streamlit application", "Python 3.12 in a modular code base: FastAPI services, Streamlit (or React) screens, database migrations, automated tests, Git with CI/CD"],
+            ["Database", "Files on disk", "PostgreSQL 16 for users, library, text chunks, vectors and audit trail"],
+            ["Search", "Keyword ranking in memory", "Hybrid search: full-text plus vector similarity plus a re-ranker, across the whole archive"],
+            ["Documents", "Uploaded one by one, text-based files", "Bulk import through a job queue, OCR for scans, S3-compatible object storage"],
+            ["AI model", f"Shared API, currently {esc(MODEL)}", "Paid enterprise API under no-training and retention terms; fast model for chat, stronger model for reports"],
+            ["Identity", "Local passwords", "Single sign-on (Microsoft Entra ID / OIDC), roles stored in the database"],
+            ["Access control", "Checked in the application", "Also enforced in the database queries, so no result can leak"],
+            ["Audit & monitoring", "Log file", "Append-only audit table, Grafana dashboards, alerts, export to the security team’s SIEM"],
+            ["Deployment", "One process", "Docker containers behind Nginx on two application nodes with rolling updates"],
+            ["Backup & recovery", "Disk copy", "Daily snapshots plus continuous log archiving, versioned file storage, tested restore"],
+        ], ["16%", "28%", "56%"]), unsafe_allow_html=True)
+
+    with t2:
+        st.markdown("#### 🧰 Technology stack")
+        st.markdown(html_table(["Layer", "Technology", "Why"], [
+            ["Language", "Python 3.12", "Same language as the pilot, so the existing logic is reused; default on Ubuntu 24.04"],
+            ["Backend API", "FastAPI, Uvicorn/Gunicorn, Pydantic, SQLAlchemy 2, Alembic", "Typed, fast, streaming answers, safe schema migrations"],
+            ["User interface", "Streamlit first; React/Next.js optional later", "Keep the screens users already know; upgrade only if needed"],
+            ["Database", "PostgreSQL 16 with pgvector and built-in full-text search", "One database for data, keyword search and meaning-based search"],
+            ["Job queue", "Redis with Celery workers", "Reliable bulk import, OCR, tagging and embedding"],
+            ["File storage", "S3-compatible (AWS S3, Azure Blob or on-premises MinIO)", "Cheap, versioned storage for the original files"],
+            ["Reading files", "pypdf, python-docx, python-pptx, openpyxl; OCRmyPDF/Tesseract or a cloud document-intelligence service for scans", "Covers every supported format, including scanned PDFs"],
+            ["Web tier", "Nginx, TLS 1.3, web application firewall", "Encrypted access, only port 443 exposed"],
+            ["Containers", "Docker and Docker Compose", "Repeatable deployments; Kubernetes only if usage grows to several teams"],
+            ["Identity", "Microsoft Entra ID (OIDC), if TMC uses Microsoft 365", "One company login, central joiner/leaver control"],
+            ["Monitoring", "Prometheus, Grafana, Loki, Sentry", "Health, speed and error alerts"],
+            ["Delivery", "GitHub, GitHub Actions, Terraform", "Reviewed code, automated tests and repeatable infrastructure"],
+        ], ["16%", "42%", "42%"]), unsafe_allow_html=True)
+        st.markdown("#### 🤖 AI model requirements")
+        st.markdown(html_table(["Need", "Requirement"], [
+            ["Chat & report model", "Paid API tier with enterprise terms: no training on TMC data, controllable retention, suitable data residency. Context of 128k tokens or more, structured JSON output, streaming. "
+                                    "Candidates: Azure OpenAI, Anthropic Claude API, OpenAI API or a paid Groq tier. Choose on contract and data policy, then test on TMC’s own questions."],
+            ["Embedding model", "Multilingual, about 1,024 dimensions; hosted API or a self-hosted open model"],
+            ["Re-ranker", "Cross-encoder re-ranker (hosted or self-hosted) to sharpen the top results before the AI reads them"],
+            ["One-off bulk load", "About 4–5 billion embedding tokens and about 250 million tagging tokens for 200,000 documents (assumes 30 pages per document)"],
+            ["Daily use", "About 15–20 million tokens a day at 200 active users asking 20 questions each"],
+            ["Controls", "Per-user rate limits, budget alerts, retries with a fallback model, prompts under version control, and an evaluation set of 100+ real questions"],
+        ], ["20%", "80%"]), unsafe_allow_html=True)
+
+    with t3:
+        st.markdown("#### 📐 Sizing for 200,000+ documents")
+        st.markdown(html_table(["Item", "Estimate", "Assumption"], [
+            ["Pages", "≈ 6 million", "200,000 documents × 30 pages"],
+            ["Searchable chunks", "≈ 10–12 million", "About two chunks per page"],
+            ["Original files", "≈ 600 GB (plan 2 TB)", "3 MB average, with room to grow and keep versions"],
+            ["Extracted text", "≈ 20 GB", "About 3 KB per page"],
+            ["Vector index", "≈ 100–150 GB including index", "1,024 dimensions per chunk; kept in memory for speed"],
+        ], ["22%", "30%", "48%"]), unsafe_allow_html=True)
+        st.markdown("#### 🖥️ Recommended production servers")
+        st.markdown(html_table(["Role", "Qty", "vCPU", "RAM", "Disk", "Notes"], [
+            ["Application / API", "2 (high availability)", "8", "32 GB", "200 GB NVMe", "Nginx, FastAPI, Streamlit; about 100–200 concurrent users"],
+            ["Ingestion workers", "1–2", "16", "64 GB", "500 GB NVMe scratch", "Reading, OCR, tagging, embedding calls; add workers only for the bulk load"],
+            ["Database primary", "1", "16", "128 GB", "1 TB NVMe, 10,000+ IOPS", "PostgreSQL 16 + pgvector; vector index fits in memory"],
+            ["Database replica", "1", "16", "128 GB", "1 TB NVMe", "Hot standby, read queries, backups"],
+            ["Redis", "1", "2", "8 GB", "50 GB", "Job queue and cache; may share a worker node"],
+            ["File storage", "Managed", "-", "-", "2 TB, versioning on", "S3, Azure Blob or MinIO"],
+            ["Backup", "Managed", "-", "-", "≈ 2× database size", "Daily snapshot plus log archiving, 30-day retention"],
+        ], ["16%", "13%", "7%", "8%", "17%", "39%"]), unsafe_allow_html=True)
+        st.markdown("#### 🐧 Operating system")
+        st.markdown("- **Ubuntu Server 24.04 LTS (Noble Numbat), 64-bit.** Standard support runs to 2029, and to 2034 with Ubuntu Pro. It ships Python 3.12, PostgreSQL 16 and a current Nginx, so no custom builds are needed. "
+                    "Check the current LTS release at deployment time and validate before choosing a newer one.\n"
+                    "- **Starter single server** for a first proof at about 50,000 documents: 16 vCPU, 64 GB RAM, 1 TB NVMe, everything on one host.\n"
+                    "- **GPU:** not required while models are used through an API. Only needed (one 24 GB card) if embeddings and the re-ranker are self-hosted.\n"
+                    "- **Security baseline:** private network, access by SSO or VPN, firewall allowing 443 only, encrypted disks, secrets in a vault, automatic security patching.\n"
+                    "- **Targets:** 99.5% availability in working hours, recovery point 15 minutes, recovery time 4 hours.")
+
+    with t4:
+        st.markdown("#### 🗓️ Timeline: about 12 weeks with cloud and AI tools")
+        st.markdown(gantt([("0 · Discovery & sizing", 1, 1), ("1 · Cloud foundation & SSO", 2, 3), ("2 · Ingestion pipeline & bulk import", 3, 6),
+                           ("3 · Hybrid search & evaluation", 6, 8), ("4 · Backend refactor & audit", 4, 8),
+                           ("5 · Security, load test & UAT", 9, 10), ("6 · Go-live & hypercare", 11, 12)]), unsafe_allow_html=True)
         st.write("")
+        st.markdown(html_table(["Phase", "Weeks", "What gets built", "What saves time"], [
+            ["0 Discovery", "1", "Sample of 1,000 documents, data classification, cloud and model choice, success measures", "AI scripts to profile the sample"],
+            ["1 Foundation", "2–3", "Ubuntu 24.04 servers, PostgreSQL + pgvector, file storage, Nginx/TLS, Docker, CI/CD, single sign-on", "Managed cloud services; AI-drafted Terraform, Docker and pipeline files"],
+            ["2 Ingestion", "3–6", "Job queue and workers, OCR, tagging, duplicate and version detection, embeddings, bulk import of 200,000 documents", "AI-assisted parsers and tests; batch model APIs; workers scaled up for the load"],
+            ["3 Search", "6–8", "Hybrid retrieval, re-ranker, evaluation set of 100+ questions, tuning", "AI-generated test questions and automated scoring"],
+            ["4 Backend", "4–8", "FastAPI services, database schema and migrations, row-level access, audit tables, existing screens ported", "AI coding assistants for boilerplate, unit tests and migration scripts"],
+            ["5 Assurance", "9–10", "Penetration test, load test at 200 users, backup and restore drill, user acceptance testing", "Automated test generation; Locust or k6 load scripts"],
+            ["6 Go-live", "11–12", "Training, phased rollout, monitoring, two weeks of close support", "AI-written runbooks and user guides"],
+        ], ["14%", "8%", "50%", "28%"]), unsafe_allow_html=True)
+        st.markdown(html_table(["Scenario", "Calendar time"], [
+            ["Fast track (everything approved up front, few scanned files)", "≈ 8 weeks"],
+            ["Realistic (plan above)", "≈ 12 weeks"],
+            ["Conservative (many scans, slow approvals, API limits)", "≈ 16 weeks"],
+            ["Same scope without AI coding tools and managed cloud services", "≈ 5–6 months (indicative)"],
+            ["Bulk indexing of 200,000 documents (inside phase 2)", "≈ 2–4 days of processing"],
+        ], ["62%", "38%"]), unsafe_allow_html=True)
+        st.caption("Assumes one senior developer, one DevOps/backend engineer at about half time, and a business tester; cloud account and AI contract approved by week 2. "
+                   "Main risks: share of scanned files, AI provider rate limits, data-classification approval and SSO approval. Re-estimate after discovery.")
 
 
 def render_contact() -> None:
     st.markdown('<div class="hero"><h2>✉️ Contact us</h2><p>Questions, bugs or ideas? We want to hear from pilot users.</p></div>', unsafe_allow_html=True)
     p1, p2 = st.columns(2, gap="medium")
-    p1.markdown('<div class="person"><div class="nm">Nadeem Sohail</div><div class="rl">Project Lead • Library Automation Expert</div></div>', unsafe_allow_html=True)
-    p2.markdown('<div class="person"><div class="nm">Saif Ullah Tarar</div><div class="rl">Practice Head • Head of AI Engineering</div></div>', unsafe_allow_html=True)
+    p1.markdown('<div class="person"><div class="nm">Nadeem Sohail</div><div class="rl">Project Lead • Library Automation Expert</div>'
+                '<div class="ct">✉️ <a href="mailto:nadeem.sohail@tmcltd.com">nadeem.sohail@tmcltd.com</a><br>'
+                '💬 WhatsApp: <a href="https://wa.me/923014236817" target="_blank" rel="noopener">+92 301 4236817</a></div></div>', unsafe_allow_html=True)
+    p2.markdown('<div class="person"><div class="nm">Saif Ullah Tarar</div><div class="rl">Practice Head • Head of AI Engineering</div>'
+                '<div class="ct">✉️ <a href="mailto:saif.ullah@tmcltd.com">saif.ullah@tmcltd.com</a></div></div>', unsafe_allow_html=True)
     st.write("")
     st.markdown("#### 🛟 Internal support")
     url = secret("HELPDESK_URL")
