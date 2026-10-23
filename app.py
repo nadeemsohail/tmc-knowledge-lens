@@ -132,15 +132,16 @@ div[data-testid="stVerticalBlockBorderWrapper"] { border-radius:18px; }
 .stButton>button, .stDownloadButton>button { border-radius:999px; font-weight:600; }
 .stButton>button[kind="primary"] { background:#0F6B45; border:none; color:#fff; }
 .stButton>button[kind="primary"]:hover { background:#138A58; }
-.topbar { display:flex; align-items:center; gap:20px; padding:16px 28px; border-radius:18px; margin-bottom:14px;
-          background:linear-gradient(120deg,#0A4F34 0%,#0F6B45 55%,#1A8A5A 100%); box-shadow:0 4px 14px rgba(10,79,52,.25); }
-.topbar .logo { background:#fff; border-radius:12px; padding:8px 12px; display:flex; align-items:center; }
-.topbar .titles { flex:1; }
-.topbar h1 { color:#FFFFFF; margin:0; font-size:1.7rem; letter-spacing:.2px; }
-.topbar p { color:#D4EDE0; margin:2px 0 0; font-size:.92rem; }
-.topbar .pills { display:flex; gap:10px; flex-wrap:wrap; }
+.topbar { display:flex; align-items:center; gap:30px; padding:30px 40px; min-height:150px; border-radius:22px; margin-bottom:16px;
+          background:linear-gradient(120deg,#08402B 0%,#0F6B45 55%,#1A8A5A 100%); box-shadow:0 10px 28px rgba(10,79,52,.30); }
+.topbar .logo { background:#fff; border-radius:18px; padding:14px 22px; display:flex; align-items:center; box-shadow:0 4px 14px rgba(0,0,0,.18); }
+.topbar .logo img { height:88px; width:auto; display:block; }
+.topbar .titles { flex:1; min-width:0; }
+.topbar h1 { color:#FFFFFF; margin:0; font-size:2.7rem; font-weight:800; letter-spacing:.3px; line-height:1.08; }
+.topbar p { color:#D4EDE0; margin:8px 0 0; font-size:1.06rem; max-width:780px; }
+.topbar .pills { display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; max-width:340px; }
 .topbar .pill { background:rgba(255,255,255,.15); color:#fff; border:1px solid rgba(255,255,255,.3);
-                border-radius:999px; padding:6px 14px; font-size:.82rem; white-space:nowrap; }
+                border-radius:999px; padding:8px 16px; font-size:.88rem; white-space:nowrap; }
 .kpi { border-radius:16px; padding:16px 18px; color:#fff; box-shadow:0 4px 12px rgba(0,0,0,.12); min-height:132px; }
 .kpi .ic { font-size:1.5rem; } .kpi .v { font-size:2.1rem; font-weight:700; line-height:1.15; }
 .kpi .l { font-size:.9rem; font-weight:600; opacity:.95; } .kpi .s { font-size:.74rem; opacity:.85; margin-top:2px; }
@@ -159,6 +160,38 @@ div[data-testid="stVerticalBlockBorderWrapper"] { border-radius:18px; }
 .glance h4 { margin:0 0 6px; color:#0F6B45; }
 .small { font-size:.8rem; color:#6B7280; }
 
+/* ---- Dark sidebar ---- */
+section[data-testid="stSidebar"] { background:#1E2227 !important; border-right:1px solid #2E343B; }
+section[data-testid="stSidebar"] :is(h1,h2,h3,p,label,li,summary,small) { color:#E6E9ED !important; }
+section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] { color:#9AA3AD !important; }
+section[data-testid="stSidebar"] hr { border-color:#3A4048; }
+section[data-testid="stSidebar"] :is(input,textarea) { background:#2B3036 !important; color:#FFFFFF !important; }
+section[data-testid="stSidebar"] :is(div[data-baseweb="input"],div[data-baseweb="base-input"]) { background:#2B3036 !important; border-color:#444B53 !important; }
+section[data-testid="stSidebar"] [data-testid="stExpander"] { background:#262B31; border:1px solid #3A4048; border-radius:12px; }
+section[data-testid="stSidebar"] .stButton>button { background:#2F353C; color:#FFFFFF; border:1px solid #4A525B; }
+section[data-testid="stSidebar"] .stButton>button:hover { background:#3A4149; border-color:#1FA67A; color:#FFFFFF; }
+
+/* ---- Footer + pages ---- */
+.block-container { padding-bottom:64px !important; }
+.kl-footer { position:fixed; left:0; right:0; bottom:0; z-index:99; text-align:center; padding:10px 16px; font-size:.82rem; color:#C9D1D9;
+             background:linear-gradient(90deg,#14181C,#1E2227); border-top:2px solid #0F6B45; }
+.kl-footer b { color:#FFFFFF; }
+.hero { background:#fff; border:1px solid #E3E6EE; border-left:6px solid #0F6B45; border-radius:16px; padding:22px 28px; margin-bottom:14px; }
+.hero h2 { margin:0 0 6px; color:#0A4F34; font-size:1.7rem; }
+.hero p { color:#3B4252; font-size:1.05rem; margin:0; }
+.pcard { background:#fff; border:1px solid #E3E6EE; border-top:4px solid #0F6B45; border-radius:16px; padding:18px 22px; min-height:200px; }
+.pcard h4 { margin:0 0 8px; color:#0F6B45; font-size:1.1rem; }
+.pcard p, .pcard li { color:#3B4252; font-size:.95rem; line-height:1.5; }
+.pcard ul { padding-left:18px; margin:4px 0 0; }
+.stepno { display:inline-flex; width:36px; height:36px; border-radius:50%; background:#0F6B45; color:#fff; align-items:center;
+          justify-content:center; font-weight:700; margin-bottom:8px; }
+.person { background:#fff; border:1px solid #E3E6EE; border-radius:16px; padding:20px 24px; }
+.person .nm { font-size:1.25rem; font-weight:700; color:#0A4F34; } .person .rl { color:#5F6368; margin-top:2px; }
+.cmp { width:100%; border-collapse:collapse; background:#fff; border-radius:14px; overflow:hidden; font-size:.92rem; }
+.cmp th { background:#0F6B45; color:#fff; text-align:left; padding:10px 14px; }
+.cmp td { padding:10px 14px; border-top:1px solid #E8EAF0; vertical-align:top; color:#3B4252; }
+.cmp td:first-child { font-weight:600; color:#0A4F34; }
+
 /* ---- Pill chat box: "Ask a question or create something  •  N sources  •  (send)" ---- */
 div[data-testid="stChatInput"] { position:relative; background:transparent !important; }
 div[data-testid="stChatInput"] > div { background:#FFFFFF !important; border:1px solid #E6E8EE !important; border-radius:999px !important;
@@ -174,6 +207,11 @@ div[data-testid="stChatInput"]::after { position:absolute; right:74px; top:50%; 
 </style>
 """
 st.markdown(CSS, unsafe_allow_html=True)
+APP_VERSION = "1.0"
+
+
+def render_footer() -> None:
+    st.markdown(f'<div class="kl-footer"><b>TMC Knowledge Lens</b> v{APP_VERSION} • Built by TMC AI Internal Digital Department © {datetime.now().year}</div>', unsafe_allow_html=True)
 
 
 # ----------------------------------------------------------------------------
@@ -264,7 +302,7 @@ def save_users(u: dict) -> None:
 def audit(action: str, **detail) -> None:
     u = st.session_state.get("user") or {"name": "anonymous"}
     row = {"ts": datetime.now().isoformat(timespec="seconds"), "user": u.get("username", u["name"]), "action": action}
-    row.update({k: (v[:300] if isinstance(v, str) else v) for k, v in detail.items()})
+    row.update({k: (v[:1000] if isinstance(v, str) else v) for k, v in detail.items()})
     try:
         with STORE.lock, open(DATA / "audit.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -874,7 +912,7 @@ def make_doc_brief(d: dict) -> str:
 # ----------------------------------------------------------------------------
 ss_ = st.session_state
 for _k, _v in {"selected": set(), "results": None, "chat": [], "summary": None, "report": None,
-               "flash": [], "up_key": 0, "rfp_key": 0, "auth": None}.items():
+               "flash": [], "up_key": 0, "rfp_key": 0, "auth": None, "page": "Workspace"}.items():
     ss_.setdefault(_k, _v)
 tax = load_taxonomy()
 LIB = STORE.library()
@@ -964,7 +1002,7 @@ def try_login(username: str, password: str):
 def auth_header(subtitle: str) -> None:
     st.markdown(f"""
 <div class="topbar">
-  <div class="logo"><img src="https://tmcltd.com/wp-content/uploads/2025/10/TallyMarks-Consulting-TMC-logo.webp" width="64" alt="TMC"></div>
+  <div class="logo"><img src="https://tmcltd.com/wp-content/uploads/2025/10/TallyMarks-Consulting-TMC-logo.webp" alt="TMC"></div>
   <div class="titles"><h1>🔍 Knowledge Lens</h1><p>{esc(subtitle)}</p></div>
 </div>""", unsafe_allow_html=True)
 
@@ -1040,6 +1078,7 @@ def render_force_change(me: dict) -> None:
 ensure_bootstrap_admin()
 if ss_.auth is None:
     render_login()
+    render_footer()
     st.stop()
 _me = load_users().get(ss_.auth)
 if not _me or not _me["active"]:
@@ -1055,6 +1094,7 @@ _role = _me["role"] if _me["role"] in ROLES else ROLE_CONS
 ss_.user = {"name": _me["name"], "username": _me["username"], "role": _role, "modules": _me["modules"], "admin": _role == ROLE_ADMIN}
 if _me["must_change"]:
     render_force_change(_me)
+    render_footer()
     st.stop()
 
 
@@ -1166,17 +1206,152 @@ by_id = {d["id"]: d for d in LIB}
 # ----------------------------------------------------------------------------
 st.markdown(f"""
 <div class="topbar">
-  <div class="logo"><img src="https://tmcltd.com/wp-content/uploads/2025/10/TallyMarks-Consulting-TMC-logo.webp" width="64" alt="TMC"></div>
+  <div class="logo"><img src="https://tmcltd.com/wp-content/uploads/2025/10/TallyMarks-Consulting-TMC-logo.webp" alt="TMC"></div>
   <div class="titles"><h1>🔍 Knowledge Lens</h1><p>Search TMC project knowledge, select what matters, get cited answers and ready-to-send reports.</p></div>
   <div class="pills"><span class="pill">📚 {len(visible)} documents</span><span class="pill">☑️ {len(selected_docs)} selected</span><span class="pill">{ROLES[ss_.user["role"]]["icon"]} {esc(ss_.user["name"])} • {esc(ss_.user["role"])}</span></div>
 </div>""", unsafe_allow_html=True)
 
-tab_ws, tab_admin = st.tabs(["🧭 Workspace", "🛠️ Admin & pilot metrics"])
+
+# ----------------------------------------------------------------------------
+# Navigation (smart buttons) and report preview dialog
+# ----------------------------------------------------------------------------
+def go(page: str) -> None:
+    ss_.page = page
+
+
+PAGES = [("Workspace", "🧭 Workspace"), ("Admin", "🛠️ Admin & Metrics"), ("About", "📖 About App"),
+         ("How", "🧑‍🏫 How to Use"), ("Tech", "⚙️ Production Tech"), ("Contact", "✉️ Contact Us")]
+if not ss_.user["admin"]:
+    PAGES = [p for p in PAGES if p[0] != "Admin"]
+if ss_.page not in dict(PAGES):
+    ss_.page = "Workspace"
+PAGE = ss_.page
+
+for (_key, _lab), _col in zip(PAGES, st.columns(len(PAGES))):
+    if _key == "Workspace" and selected_docs:
+        _lab += f"  ({len(selected_docs)})"
+    _col.button(_lab, key=f"nav_{_key}", type="primary" if PAGE == _key else "secondary", on_click=go, args=(_key,), use_container_width=True)
+
+
+@st.dialog("Report preview", width="large")
+def report_preview(rp: dict) -> None:
+    r = rp["data"]
+    st.markdown(f'<div class="hero"><h2>{esc(r["title"])}</h2><p>{len(r["sections"])} section(s)'
+                + (f' • table with {len(r["table"]["rows"])} row(s)' if r["table"] else "")
+                + f' • {len(r["sources"])} source(s) • generated {datetime.now():%d %b %Y}</p></div>', unsafe_allow_html=True)
+    names = ["📌 Summary", "🧩 Findings"] + (["📊 Table"] if r["table"] else []) + ["📚 Sources"]
+    tabs = st.tabs(names)
+    with tabs[0]:
+        st.markdown(f'<div class="glance"><h4>Executive summary</h4>{esc(r["executive_summary"])}</div>', unsafe_allow_html=True)
+    with tabs[1]:
+        for s in r["sections"]:
+            st.markdown(f"#### {s['heading']}")
+            st.markdown("\n".join(f"- {b}" for b in s["bullets"]))
+    i = 2
+    if r["table"]:
+        with tabs[i]:
+            st.dataframe(pd.DataFrame(r["table"]["rows"], columns=r["table"]["columns"]), use_container_width=True, hide_index=True, height=420)
+        i += 1
+    with tabs[i]:
+        st.markdown("\n".join(f"- {x}" for x in r["sources"]) or "No sources.")
+    st.caption("Download the Word, PowerPoint, Excel or PDF version from the Studio panel.")
+    if st.button("Close preview", use_container_width=True):
+        st.rerun()
+
+
+# ----------------------------------------------------------------------------
+# Static pages (only reachable after sign-in)
+# ----------------------------------------------------------------------------
+def render_about() -> None:
+    st.markdown('<div class="hero"><h2>📖 About Knowledge Lens</h2>'
+                '<p><b>Turning TMC’s document archive from a graveyard into a delivery accelerator.</b></p></div>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3, gap="medium")
+    c1.markdown('<div class="pcard"><h4>🎯 The vision</h4><p>Every proposal, blueprint and cutover plan TMC has ever written should be '
+                'one search away, trustworthy, and ready to reuse on the next engagement, instead of sitting forgotten in a folder.</p></div>', unsafe_allow_html=True)
+    c2.markdown('<div class="pcard"><h4>😩 The pain</h4><p>Consultants lose hours hunting for past proposals and reading 60-page blueprints '
+                'just to find one decision. Names differ (TML or Tata Motors Ltd), old drafts look like new ones, and nobody is sure which file is current.</p></div>', unsafe_allow_html=True)
+    c3.markdown('<div class="pcard"><h4>💡 The solution</h4><p>Library-grade AI. Every upload is auto-tagged with client, SAP module, phase and document type, '
+                'versions are tracked, and answers come with citations to the exact page, drawn only from the documents you select.</p></div>', unsafe_allow_html=True)
+    st.markdown("#### 🏆 The differentiator")
+    st.markdown("""
+<table class="cmp">
+<tr><th style="width:20%">Capability</th><th style="width:38%">General-purpose assistant search (e.g. Copilot)</th><th>TMC Knowledge Lens</th></tr>
+<tr><td>What it searches</td><td>Whatever exists, as it happens to be filed</td><td>A curated library, catalogued on upload</td></tr>
+<tr><td>Client names</td><td>“TML” and “Tata Motors Ltd” are different words</td><td>Authority control maps every variant to one client</td></tr>
+<tr><td>SAP vocabulary</td><td>General language understanding</td><td>Controlled vocabulary expands terms such as RICEFW and Fit-to-Standard</td></tr>
+<tr><td>Versions</td><td>Old and new drafts appear side by side</td><td>Duplicates detected, older versions marked Superseded</td></tr>
+<tr><td>Access</td><td>Follows file-share permissions</td><td>Role and SAP-module access, plus restricted documents</td></tr>
+<tr><td>Answers</td><td>Free-form</td><td>Only from the ticked sources, cited as [S1], [S2] to the page</td></tr>
+<tr><td>Accountability</td><td>Varies by tenant setup</td><td>Every search, question, report and upload in an audit log</td></tr>
+</table>""", unsafe_allow_html=True)
+    st.caption("Knowledge Lens complements Copilot rather than replacing it: Copilot works across Microsoft 365, while Knowledge Lens is the governed, SAP-aware library for project knowledge.")
+    st.button("🧭 Open the workspace", on_click=go, args=("Workspace",), type="primary")
+
+
+def render_howto() -> None:
+    st.markdown('<div class="hero"><h2>🧑‍🏫 How to use Knowledge Lens</h2><p>Three steps from question to deliverable.</p></div>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3, gap="medium")
+    c1.markdown('<div class="pcard"><div class="stepno">1</div><h4>Search & select</h4><p>Type a client, SAP module or topic in <b>Search library</b> and '
+                'use the filters to narrow it down. Tick the documents you want the AI to read. Superseded versions are hidden unless you ask for them.</p></div>', unsafe_allow_html=True)
+    c2.markdown('<div class="pcard"><div class="stepno">2</div><h4>Ask & summarize</h4><p>Press <b>Summarize selected</b> for a project overview, or type a question in the chat '
+                '(try the quick buttons for risks, timeline and deliverables). Every claim carries a citation such as [S1].</p></div>', unsafe_allow_html=True)
+    c3.markdown('<div class="pcard"><div class="stepno">3</div><h4>Export</h4><p>Generate a report in <b>Word, PowerPoint, Excel or PDF</b> from the Studio panel, '
+                'or press <b>One-page brief</b> under a single source to get a short summary of that document.</p></div>', unsafe_allow_html=True)
+    st.info("🔒 Answers only come from the documents you tick. Every action is logged for security.")
+    st.markdown("**Good to know**")
+    st.markdown("- **Find similar past work:** upload an RFP in the Studio panel and the library lists the closest past documents.\n"
+                "- **No answer?** The AI says so when the sources do not contain it. Tick more documents or rephrase.\n"
+                "- **Wrong answer?** Press 👎 under it so the team can improve the library.")
+    st.button("🧭 Start in the workspace", on_click=go, args=("Workspace",), type="primary")
+
+
+def render_tech() -> None:
+    st.markdown('<div class="hero"><h2>⚙️ Production technologies</h2><p>Enterprise-grade engineering behind a simple screen.</p></div>', unsafe_allow_html=True)
+    cards = [
+        ("🖥️ Frontend", ["Streamlit (Python)", "Streaming answers, role-aware workspace", "Word, PowerPoint, Excel and PDF export"]),
+        ("🤖 AI model", [f"Groq API, currently <b>{esc(MODEL)}</b>", "Ultra-fast inference; the model is a setting and can be swapped", "Low temperature, answers restricted to the ticked sources"]),
+        ("🔎 Retrieval engine", ["Custom BM25 ranking over document chunks", "Controlled-vocabulary query expansion (clients, SAP terms)", "Every selected document is guaranteed representation"]),
+        ("🔐 Security", ["PBKDF2-SHA256 password hashing, login lockout", f"Session timeout after {SESSION_TTL // 60} minutes idle", "Prompt-injection guardrails (&lt;sources&gt; isolation)",
+                         "Role-based access control by SAP module", "Full audit log"]),
+        ("💾 Storage", ["Atomic JSON writes with thread locking", "Originals stored beside extracted text", "Designed to scale to PostgreSQL and object storage"]),
+        ("📏 Limits & settings", [f"Upload limit: {MAX_UPLOAD_MB} MB per file", f"Manual-search baseline: {BASELINE_MIN:g} min", f"Version {APP_VERSION}"]),
+    ]
+    for row in (cards[:3], cards[3:]):
+        for col, (title, items) in zip(st.columns(3, gap="medium"), row):
+            col.markdown(f'<div class="pcard"><h4>{title}</h4><ul>' + "".join(f"<li>{x}</li>" for x in items) + "</ul></div>", unsafe_allow_html=True)
+        st.write("")
+
+
+def render_contact() -> None:
+    st.markdown('<div class="hero"><h2>✉️ Contact us</h2><p>Questions, bugs or ideas? We want to hear from pilot users.</p></div>', unsafe_allow_html=True)
+    p1, p2 = st.columns(2, gap="medium")
+    p1.markdown('<div class="person"><div class="nm">Nadeem Sohail</div><div class="rl">Project Lead • Library Automation Expert</div></div>', unsafe_allow_html=True)
+    p2.markdown('<div class="person"><div class="nm">Saif Ullah Tarar</div><div class="rl">Practice Head • Head of AI Engineering</div></div>', unsafe_allow_html=True)
+    st.write("")
+    st.markdown("#### 🛟 Internal support")
+    url = secret("HELPDESK_URL")
+    if url:
+        st.link_button("Open the L&OD / IT Helpdesk", str(url))
+    else:
+        st.info("For access, password or technical problems, contact the L&OD or IT Helpdesk. "
+                "(An admin can add a direct link by setting HELPDESK_URL in the app secrets.)")
+    st.markdown("#### 💬 Send feedback")
+    with st.form("feedback_form", clear_on_submit=True):
+        cat = st.selectbox("Type", ["Bug", "Feature request", "Question", "Praise"])
+        msg = st.text_area("What would you like to tell us?", max_chars=1000, height=140,
+                           placeholder="Describe what happened or what you would like to see. Please do not paste confidential client data.")
+        sent = st.form_submit_button("📨 Submit feedback", type="primary")
+    if sent:
+        if len(msg.strip()) < 5:
+            st.error("Please write a little more so we can act on it.")
+        else:
+            audit("user_feedback", category=cat, message=msg.strip())
+            st.success("Thank you. Your feedback was recorded for the project team.")
 
 # ============================================================================
 # WORKSPACE
 # ============================================================================
-with tab_ws:
+if PAGE == "Workspace":
     col_src, col_mid, col_studio = st.columns([1.25, 2.3, 1.2], gap="medium")
 
     # ---------------- LEFT: SOURCES ----------------
@@ -1391,11 +1566,8 @@ with tab_ws:
                 for i, ext in enumerate(["docx", "pptx", "xlsx", "pdf"]):
                     g[i % 2].download_button(LAB[ext], rp["files"][ext], file_name=f"{rp['stem']}.{ext}", mime=MIME[ext],
                                              key=f"dl_{ext}", use_container_width=True)
-                with st.expander("👁️ Preview"):
-                    st.write(rp["data"]["executive_summary"])
-                    for s in rp["data"]["sections"]:
-                        st.markdown(f"**{s['heading']}**")
-                        st.markdown("\n".join(f"- {b}" for b in s["bullets"]))
+                if st.button("👁️ Preview report", key="open_preview", use_container_width=True):
+                    report_preview(rp)
 
             if selected_docs:
                 st.markdown('<div class="panel-title">🗂️ Selected sources</div>', unsafe_allow_html=True)
@@ -1510,7 +1682,7 @@ def cb_delete_user(sel):
 # ============================================================================
 # ADMIN & PILOT METRICS
 # ============================================================================
-with tab_admin:
+if PAGE == "Admin":
     if not ss_.user["admin"]:
         st.info("🔒 The admin area is available to the Admin role only.")
     else:
@@ -1741,3 +1913,17 @@ with tab_admin:
                 st.download_button("Download audit log (CSV)", full.to_csv(index=False), file_name="audit_log.csv", mime="text/csv")
             else:
                 st.caption("No events yet.")
+
+
+# ============================================================================
+# STATIC PAGES + FOOTER
+# ============================================================================
+if PAGE == "About":
+    render_about()
+elif PAGE == "How":
+    render_howto()
+elif PAGE == "Tech":
+    render_tech()
+elif PAGE == "Contact":
+    render_contact()
+render_footer()
