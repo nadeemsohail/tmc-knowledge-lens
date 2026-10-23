@@ -71,6 +71,7 @@ SESSION_TTL = int(secret("SESSION_TTL_MIN", 60)) * 60
 PBKDF2_ITERS = 310_000
 MAX_LOGIN_FAILS, LOCK_SECONDS = 5, 300
 PANEL_H = 720
+BASELINE_MIN = float(secret("MANUAL_BASELINE_MIN", 12))  # minutes a manual search/answer takes (pilot baseline)
 
 ROLE_ADMIN, ROLE_MPO, ROLE_CONS = "Admin", "SAP: MPO", "SAP: Consultant"
 ROLES = {
@@ -293,9 +294,36 @@ def read_audit() -> list:
 # ----------------------------------------------------------------------------
 # LLM client (cached, with timeout + retries)
 # ----------------------------------------------------------------------------
-API_KEY = secret("GROQ_API_KEY")
+def find_api_key():
+    """GROQ_API_KEY, legacy GITHUB_TOKEN, then any string secret (also inside [sections]) that looks like a Groq key."""
+    key = secret("GROQ_API_KEY") or secret("GITHUB_TOKEN")
+    if key:
+        return str(key).strip()
+
+    def walk(m):
+        for k, v in m.items():
+            if hasattr(v, "items"):
+                found = walk(v)
+                if found:
+                    return found
+            elif isinstance(v, str) and (str(k).upper() in ("GROQ_API_KEY", "GROQ_KEY", "API_KEY") or v.strip().startswith("gsk_")):
+                return v.strip()
+        return None
+
+    try:
+        return walk(st.secrets)
+    except Exception:
+        return None
+
+
+API_KEY = find_api_key()
 if not API_KEY:
-    st.error("GROQ_API_KEY is missing. Add it to the app secrets or environment.")
+    try:
+        seen = ", ".join(map(str, st.secrets.keys())) or "none"
+    except Exception:
+        seen = "no secrets file found"
+    st.error("No Groq API key found. Add `GROQ_API_KEY = \"gsk_...\"` to the app secrets (or as an environment variable) and reboot the app.\n\n"
+             f"Secret names the app can currently see: {seen}")
     st.stop()
 
 
@@ -829,6 +857,18 @@ def make_report(rtype: str, focus: str, docs: list, tax: dict) -> dict:
     return {"data": r, "stem": stem, "files": {"docx": build_docx(r), "pptx": build_pptx(r), "xlsx": build_xlsx(r), "pdf": build_pdf(r)}}
 
 
+def make_doc_brief(d: dict) -> str:
+    """One-page Markdown TL;DR of a single document."""
+    m = d["meta"]
+    sys = ("Write a one-page brief (max 350 words) in Markdown for a busy consultant, with these headings: "
+           "## Purpose, ## Key points (5-7 bullets), ## Decisions & deliverables, ## Risks & open items, ## Where to look (cite page/section numbers). "
+           "Use only the source; write 'Not stated' when something is absent. " + SOURCE_GUARD)
+    body = llm([{"role": "system", "content": sys},
+                {"role": "user", "content": f"<sources>\n{sample_text(d, 18000)}\n</sources>"}], temperature=0.2)
+    return (f"# {m['doc_title']}\n_{m['doc_type']} • {m['client']} • {m['sap_module']} • status: {d['status']} • "
+            f"generated {datetime.now():%d %b %Y} by TMC Knowledge Lens_\n\n{clean(body)}\n")
+
+
 # ----------------------------------------------------------------------------
 # Session state
 # ----------------------------------------------------------------------------
@@ -1032,9 +1072,9 @@ with st.sidebar:
     elif role == ROLE_MPO:
         st.caption("Full view of all documents")
     with st.expander("🔑 Change password"):
-        cur = st.text_input("Current password", type="password", key="cp_cur")
-        n1 = st.text_input("New password", type="password", key="cp_new")
-        n2 = st.text_input("Confirm new password", type="password", key="cp_new2")
+        cur = st.text_input("Current password", type="password", key="cp_cur", help="The password you used to sign in.")
+        n1 = st.text_input("New password", type="password", key="cp_new", help="At least 8 characters, with letters and numbers.")
+        n2 = st.text_input("Confirm new password", type="password", key="cp_new2", help="Type the new password again.")
         if st.button("Update password", key="cp_go"):
             with STORE.lock:
                 users = load_users()
@@ -1100,12 +1140,21 @@ def render_turn_extras(i: int, c: dict) -> None:
             for x in c["cites"]:
                 st.markdown(f"**[S{x['n']}] {x['title']}** - {x['loc']}")
                 st.caption(x["snippet"])
+    b0, b1, b2, _ = st.columns([2.4, 1, 1, 5])
+    if c.get("ok", True):
+        with b0.popover("📋 Copy"):
+            st.caption("Use the copy icon at the top-right of the box.")
+            st.code(c["a"], language=None)
     if c["rating"] is None:
-        r1, r2, _ = st.columns([1, 1, 6])
-        r1.button("👍", key=f"fb_up_{c['uid']}", on_click=rate, args=(i, 1))
-        r2.button("👎", key=f"fb_dn_{c['uid']}", on_click=rate, args=(i, -1))
+        b1.button("👍", key=f"fb_up_{c['uid']}", on_click=rate, args=(i, 1))
+        b2.button("👎", key=f"fb_dn_{c['uid']}", on_click=rate, args=(i, -1))
     elif c["rating"] != 0:
-        st.caption("Thanks for the feedback.")
+        b1.caption("Thanks!")
+
+
+def clear_chat():
+    ss_.chat = []
+    audit("chat_clear")
 
 
 visible = [d for d in LIB if can_see(d)]
@@ -1250,7 +1299,9 @@ with tab_ws:
             else:
                 st.info("Search, tick the documents you need, then press Summarize selected.")
 
-            st.markdown('<div class="panel-title">💬 Chat with the selected documents</div>', unsafe_allow_html=True)
+            ch1, ch2 = st.columns([3, 1])
+            ch1.markdown('<div class="panel-title">💬 Chat with the selected documents</div>', unsafe_allow_html=True)
+            ch2.button("🧹 Clear chat", on_click=clear_chat, disabled=not ss_.chat, use_container_width=True)
             chat_box = st.container(height=330, border=False)
             QUICK = [("⚠️ Key risks", "What are the key risks and issues?"), ("📅 Timeline", "What is the timeline and key milestones?"),
                      ("📦 Deliverables", "What are the main deliverables?"), ("🔁 Compare", "Compare these documents: similarities and differences.")]
@@ -1362,6 +1413,19 @@ with tab_ws:
                         p = Path(d.get("path") or "")
                         if d.get("path") and p.is_file() and DATA.resolve() in p.resolve().parents:  # no path traversal
                             st.download_button("⬇️ Download original", p.read_bytes(), file_name=d["name"], key=f"orig_{d['id']}")
+                        bkey = f"brief_{d['id']}"
+                        if st.button("📝 One-page brief", key=f"bbtn_{d['id']}", help="AI TL;DR of just this document"):
+                            with st.spinner("Writing the brief…"):
+                                try:
+                                    ss_[bkey] = make_doc_brief(d)
+                                    audit("doc_brief", doc=d["name"])
+                                except Exception as e:
+                                    LOG.exception("brief failed")
+                                    st.error(f"Could not write the brief: {e}")
+                        if ss_.get(bkey):
+                            st.markdown(ss_[bkey])
+                            st.download_button("⬇️ Download brief (.md)", ss_[bkey], file_name=f"{Path(d['name']).stem}_brief.md",
+                                               mime="text/markdown", key=f"bdl_{d['id']}")
 
 
 # ---- user-management callbacks -------------------------------------------------
@@ -1468,13 +1532,18 @@ with tab_admin:
             kpis = [("📚", "Documents", len(LIB), f"{n_cur} current • {len(LIB) - n_cur} superseded", "#0F6B45", "#1FA67A"),
                     ("💬", "Questions asked", len(asks), f"{n_users} active user(s)", "#2563EB", "#3B82F6"),
                     ("🔍", "Searches", n_search, "library searches run", "#7C3AED", "#A78BFA"),
-                    ("⏱️", "Avg. answer time", avg_t, "manual baseline ≈ 12 min", "#D97706", "#F2A93B"),
+                    ("⏱️", "Avg. answer time", avg_t, f"manual baseline ≈ {BASELINE_MIN:g} min", "#D97706", "#F2A93B"),
                     ("👍", "Helpful answers", helpful, f"{len(fb)} rating(s) given", "#059669", "#34D399"),
                     ("📝", "Reports generated", n_rep, "Word • PPT • Excel • PDF", "#DC2626", "#F97316")]
             for c, (ic, lab, val, sub, c1, c2) in zip(st.columns(6), kpis):
                 c.markdown(f'<div class="kpi" style="background:linear-gradient(135deg,{c1},{c2})"><div class="ic">{ic}</div>'
                            f'<div class="v">{esc(val)}</div><div class="l">{esc(lab)}</div><div class="s">{esc(sub)}</div></div>', unsafe_allow_html=True)
-            st.caption("Compare these with the manual baseline measured in November (search test, summary test).")
+            saved_hrs = sum(max(BASELINE_MIN - r.get("seconds", 0) / 60, 0) for r in asks) / 60
+            st.markdown(f'<div class="glance" style="margin-top:12px"><h4>⏳ Estimated time saved</h4>'
+                        f'<span style="font-size:2.2rem;font-weight:800;color:#0F6B45">{saved_hrs:.1f} hours</span> '
+                        f'<span class="small">= {len(asks)} answered question(s) × (manual baseline of {BASELINE_MIN:g} min − actual answer time). '
+                        f'An estimate: replace the baseline with your measured November figure via MANUAL_BASELINE_MIN.</span></div>',
+                        unsafe_allow_html=True)
 
             def donut(rows, colors_, title):
                 st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
