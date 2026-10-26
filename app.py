@@ -364,7 +364,6 @@ def write_json(name: str, obj) -> None:
 
 def load_taxonomy() -> dict:
     t = read_json("taxonomy.json", DEFAULT_TAXONOMY)
-    # Merge with defaults to ensure new fields (like departments) exist if not yet added in JSON
     if not isinstance(t, dict): return DEFAULT_TAXONOMY
     for k, v in DEFAULT_TAXONOMY.items():
         if k not in t: t[k] = v
@@ -608,7 +607,6 @@ def bm25(query_tokens: list[str], toks: list[list[str]], k1=1.5, b=0.75) -> list
 
 def meta_blob(d: dict) -> str:
     m = d["meta"]
-    # Include DCN and Department in search index
     return " ".join(str(m.get(k, "")) for k in ("dcn", "doc_title", "client", "department", "industry", "sap_module", "phase", "doc_type", "summary")) + " " + d["name"]
 
 
@@ -734,10 +732,8 @@ def detect_versions(new: dict, library: list):
 
 
 def generate_dcn() -> str:
-    """Generates a unique Document Control Number (e.g., DCN-2026-0001)."""
     year = datetime.now().year
     prefix = f"DCN-{year}-"
-    # Find max existing DCN for this year
     lib = STORE.library()
     max_num = 0
     for d in lib:
@@ -774,9 +770,9 @@ def ingest(file, sec_level: str, tax: dict, library: list):
     
     meta = auto_tag(safe_name, " ".join(pages)[:5000], tax)
     meta["dcn"] = generate_dcn()
-    meta["department"] = tax["departments"][0]  # default to first department
+    meta["department"] = tax["departments"][0]
     meta["security"] = sec_level
-    meta["comments"] = []  # To hold consultant notes
+    meta["comments"] = []
 
     doc = {"id": uuid.uuid4().hex[:10], "name": safe_name, "ext": ext, "pages": pages, "unit": unit,
            "author": clean(author)[:120], "meta": meta, "hash": digest,
@@ -1238,16 +1234,10 @@ with st.sidebar:
 def can_see(d: dict) -> bool:
     u = ss_.user
     sec = d["meta"].get("security", "Internal")
-    
-    # Admin & MPO see everything
     if u["role"] in (ROLE_ADMIN, ROLE_MPO):
         return True
-        
-    # Consultants cannot see "Restricted"
     if sec == "Restricted":
         return False
-        
-    # Consultants can see "Internal" and "Confidential" if the module matches
     return d["meta"].get("sap_module") in u["modules"]
 
 
@@ -2177,7 +2167,6 @@ if PAGE == "Admin":
         with t_lib:
             st.markdown("#### 📚 Library Management")
             if LIB:
-                # Data Table
                 st.dataframe(pd.DataFrame([{"DCN": d["meta"].get("dcn", "-"), "Title": d["meta"]["doc_title"], 
                                             "Dept": d["meta"].get("department", "-"), "Security": d["meta"].get("security", "Internal"),
                                             "Client": d["meta"]["client"], "Status": d["status"], "Added By": d["uploaded_by"]}
@@ -2187,7 +2176,6 @@ if PAGE == "Admin":
                 pick = st.selectbox("Select document", [d["id"] for d in LIB], format_func=lambda i: f"{by_id[i]['meta'].get('dcn','-')} | {by_id[i]['meta']['doc_title']}")
                 d = by_id[pick]
                 
-                # Edit Form
                 with st.form(f"edit_form_{pick}"):
                     c1, c2 = st.columns(2)
                     new_dcn = c1.text_input("Document Control Number (DCN)", value=d["meta"].get("dcn", ""))
@@ -2217,7 +2205,6 @@ if PAGE == "Admin":
                         audit("edit_metadata", doc=d["name"], dcn=new_dcn)
                         st.rerun()
 
-                # Delete / File Download
                 st.markdown("---")
                 if st.button("🗑️ Delete document", type="secondary"):
                     with STORE.lock:
