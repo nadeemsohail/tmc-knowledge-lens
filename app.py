@@ -1,3 +1,4 @@
+"""
 TMC Knowledge Lens - search-first, permission-aware document workspace.
 
 Production notes
@@ -1337,5 +1338,751 @@ def render_about() -> None:
 <table class="cmp">
 <tr><th style="width:20%">Capability</th><th style="width:38%">General-purpose assistant search (e.g. Copilot)</th><th>TMC Knowledge Lens</th></tr>
 <tr><td>What it searches</td><td>Whatever exists, as it happens to be filed</td><td>A curated library, catalogued on upload</td></tr>
-<tr><td>Client names</td><td>“TML” and “Tata Motors Ltd” are different words</td><td>Autho
-The
+<tr><td>Client names</td><td>“TML” and “Tata Motors Ltd” are different words</td><td>Authority control maps every variant to one client</td></tr>
+<tr><td>SAP vocabulary</td><td>General language understanding</td><td>Controlled vocabulary expands terms such as RICEFW and Fit-to-Standard</td></tr>
+<tr><td>Versions</td><td>Old and new drafts appear side by side</td><td>Duplicates detected, older versions marked Superseded</td></tr>
+<tr><td>Access</td><td>Follows file-share permissions</td><td>Role and SAP-module access, plus restricted documents</td></tr>
+<tr><td>Answers</td><td>Free-form</td><td>Only from the ticked sources, cited as [S1], [S2] to the page</td></tr>
+<tr><td>Accountability</td><td>Varies by tenant setup</td><td>Every search, question, report and upload in an audit log</td></tr>
+</table>""", unsafe_allow_html=True)
+    st.caption("Knowledge Lens complements Copilot rather than replacing it: Copilot works across Microsoft 365, while Knowledge Lens is the governed, SAP-aware library for project knowledge.")
+    st.button("🧭 Open the workspace", on_click=go, args=("Workspace",), type="primary")
+
+
+def render_howto() -> None:
+    st.markdown('<div class="hero"><h2>🧑‍🏫 How to use Knowledge Lens</h2><p>Three steps from question to deliverable.</p></div>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3, gap="medium")
+    c1.markdown('<div class="pcard"><div class="stepno">1</div><h4>Search & select</h4><p>Type a client, SAP module or topic in <b>Search library</b> and '
+                'use the filters to narrow it down. Tick the documents you want the AI to read. Superseded versions are hidden unless you ask for them.</p></div>', unsafe_allow_html=True)
+    c2.markdown('<div class="pcard"><div class="stepno">2</div><h4>Ask & summarize</h4><p>Press <b>Summarize selected</b> for a project overview, or type a question in the chat '
+                '(try the quick buttons for risks, timeline and deliverables). Every claim carries a citation such as [S1].</p></div>', unsafe_allow_html=True)
+    c3.markdown('<div class="pcard"><div class="stepno">3</div><h4>Export</h4><p>Generate a report in <b>Word, PowerPoint, Excel or PDF</b> from the Studio panel, '
+                'or press <b>One-page brief</b> under a single source to get a short summary of that document.</p></div>', unsafe_allow_html=True)
+    st.info("🔒 Answers only come from the documents you tick. Every action is logged for security.")
+    st.markdown("**Good to know**")
+    st.markdown("- **Find similar past work:** upload an RFP in the Studio panel and the library lists the closest past documents.\n"
+                "- **No answer?** The AI says so when the sources do not contain it. Tick more documents or rephrase.\n"
+                "- **Wrong answer?** Press 👎 under it so the team can improve the library.")
+    st.button("🧭 Start in the workspace", on_click=go, args=("Workspace",), type="primary")
+
+
+def gantt(rows: list, total: int = 12) -> str:
+    head = "".join(f'<div style="flex:1;text-align:center;font-size:.72rem;color:#6B7280">W{i}</div>' for i in range(1, total + 1))
+    out = ('<div style="background:#fff;border:1px solid #E3E6EE;border-radius:14px;padding:14px 18px">'
+           f'<div style="display:flex;align-items:center;margin-bottom:6px"><div style="width:34%"></div><div style="flex:1;display:flex">{head}</div></div>')
+    for name, a, b in rows:
+        left, width = (a - 1) / total * 100, (b - a + 1) / total * 100
+        out += (f'<div style="display:flex;align-items:center;margin:7px 0"><div style="width:34%;font-size:.88rem;color:#3B4252;padding-right:10px">{name}</div>'
+                f'<div style="position:relative;flex:1;height:18px;background:#EEF0F6;border-radius:9px">'
+                f'<div style="position:absolute;left:{left:.1f}%;width:{width:.1f}%;height:18px;background:#0F6B45;border-radius:9px"></div></div></div>')
+    return out + "</div>"
+
+
+def render_tech() -> None:
+    st.markdown('<div class="hero"><h2>⚙️ Production technology & implementation plan</h2>'
+                '<p>From today’s pilot to a production platform for 200,000+ documents. All figures are planning estimates, to be confirmed in the discovery phase.</p></div>',
+                unsafe_allow_html=True)
+    t1, t2, t3, t4 = st.tabs(["🏗️ Pilot → Production", "🧰 Stack & AI model", "🖥️ Servers (Ubuntu)", "🗓️ Implementation plan"])
+
+    with t1:
+        st.markdown(html_table(["Area", "Pilot (today)", "Production target"], [
+            ["Language & code", "Python, one Streamlit application", "Python 3.12 in a modular code base: FastAPI services, Streamlit (or React) screens, database migrations, automated tests, Git with CI/CD"],
+            ["Database", "Files on disk", "PostgreSQL 16 for users, library, text chunks, vectors and audit trail"],
+            ["Search", "Keyword ranking in memory", "Hybrid search: full-text plus vector similarity plus a re-ranker, across the whole archive"],
+            ["Documents", "Uploaded one by one, text-based files", "Bulk import through a job queue, OCR for scans, S3-compatible object storage"],
+            ["AI model", f"Shared API, currently {esc(MODEL)}", "Paid enterprise API under no-training and retention terms; fast model for chat, stronger model for reports"],
+            ["Identity", "Local passwords", "Single sign-on (Microsoft Entra ID / OIDC), roles stored in the database"],
+            ["Access control", "Checked in the application", "Also enforced in the database queries, so no result can leak"],
+            ["Audit & monitoring", "Log file", "Append-only audit table, Grafana dashboards, alerts, export to the security team’s SIEM"],
+            ["Deployment", "One process", "Docker containers behind Nginx on two application nodes with rolling updates"],
+            ["Backup & recovery", "Disk copy", "Daily snapshots plus continuous log archiving, versioned file storage, tested restore"],
+        ], ["16%", "28%", "56%"]), unsafe_allow_html=True)
+
+    with t2:
+        st.markdown("#### 🧰 Technology stack")
+        st.markdown(html_table(["Layer", "Technology", "Why"], [
+            ["Language", "Python 3.12", "Same language as the pilot, so the existing logic is reused; default on Ubuntu 24.04"],
+            ["Backend API", "FastAPI, Uvicorn/Gunicorn, Pydantic, SQLAlchemy 2, Alembic", "Typed, fast, streaming answers, safe schema migrations"],
+            ["User interface", "Streamlit first; React/Next.js optional later", "Keep the screens users already know; upgrade only if needed"],
+            ["Database", "PostgreSQL 16 with pgvector and built-in full-text search", "One database for data, keyword search and meaning-based search"],
+            ["Job queue", "Redis with Celery workers", "Reliable bulk import, OCR, tagging and embedding"],
+            ["File storage", "S3-compatible (AWS S3, Azure Blob or on-premises MinIO)", "Cheap, versioned storage for the original files"],
+            ["Reading files", "pypdf, python-docx, python-pptx, openpyxl; OCRmyPDF/Tesseract or a cloud document-intelligence service for scans", "Covers every supported format, including scanned PDFs"],
+            ["Web tier", "Nginx, TLS 1.3, web application firewall", "Encrypted access, only port 443 exposed"],
+            ["Containers", "Docker and Docker Compose", "Repeatable deployments; Kubernetes only if usage grows to several teams"],
+            ["Identity", "Microsoft Entra ID (OIDC), if TMC uses Microsoft 365", "One company login, central joiner/leaver control"],
+            ["Monitoring", "Prometheus, Grafana, Loki, Sentry", "Health, speed and error alerts"],
+            ["Delivery", "GitHub, GitHub Actions, Terraform", "Reviewed code, automated tests and repeatable infrastructure"],
+        ], ["16%", "42%", "42%"]), unsafe_allow_html=True)
+        st.markdown("#### 🤖 AI model requirements")
+        st.markdown(html_table(["Need", "Requirement"], [
+            ["Chat & report model", "Paid API tier with enterprise terms: no training on TMC data, controllable retention, suitable data residency. Context of 128k tokens or more, structured JSON output, streaming. "
+                                    "Candidates: Azure OpenAI, Anthropic Claude API, OpenAI API or a paid Groq tier. Choose on contract and data policy, then test on TMC’s own questions."],
+            ["Embedding model", "Multilingual, about 1,024 dimensions; hosted API or a self-hosted open model"],
+            ["Re-ranker", "Cross-encoder re-ranker (hosted or self-hosted) to sharpen the top results before the AI reads them"],
+            ["One-off bulk load", "About 4–5 billion embedding tokens and about 250 million tagging tokens for 200,000 documents (assumes 30 pages per document)"],
+            ["Daily use", "About 15–20 million tokens a day at 200 active users asking 20 questions each"],
+            ["Controls", "Per-user rate limits, budget alerts, retries with a fallback model, prompts under version control, and an evaluation set of 100+ real questions"],
+        ], ["20%", "80%"]), unsafe_allow_html=True)
+
+    with t3:
+        st.markdown("#### 📐 Sizing for 200,000+ documents")
+        st.markdown(html_table(["Item", "Estimate", "Assumption"], [
+            ["Pages", "≈ 6 million", "200,000 documents × 30 pages"],
+            ["Searchable chunks", "≈ 10–12 million", "About two chunks per page"],
+            ["Original files", "≈ 600 GB (plan 2 TB)", "3 MB average, with room to grow and keep versions"],
+            ["Extracted text", "≈ 20 GB", "About 3 KB per page"],
+            ["Vector index", "≈ 100–150 GB including index", "1,024 dimensions per chunk; kept in memory for speed"],
+        ], ["22%", "30%", "48%"]), unsafe_allow_html=True)
+        st.markdown("#### 🖥️ Recommended production servers")
+        st.markdown(html_table(["Role", "Qty", "vCPU", "RAM", "Disk", "Notes"], [
+            ["Application / API", "2 (high availability)", "8", "32 GB", "200 GB NVMe", "Nginx, FastAPI, Streamlit; about 100–200 concurrent users"],
+            ["Ingestion workers", "1–2", "16", "64 GB", "500 GB NVMe scratch", "Reading, OCR, tagging, embedding calls; add workers only for the bulk load"],
+            ["Database primary", "1", "16", "128 GB", "1 TB NVMe, 10,000+ IOPS", "PostgreSQL 16 + pgvector; vector index fits in memory"],
+            ["Database replica", "1", "16", "128 GB", "1 TB NVMe", "Hot standby, read queries, backups"],
+            ["Redis", "1", "2", "8 GB", "50 GB", "Job queue and cache; may share a worker node"],
+            ["File storage", "Managed", "-", "-", "2 TB, versioning on", "S3, Azure Blob or MinIO"],
+            ["Backup", "Managed", "-", "-", "≈ 2× database size", "Daily snapshot plus log archiving, 30-day retention"],
+        ], ["16%", "13%", "7%", "8%", "17%", "39%"]), unsafe_allow_html=True)
+        st.markdown("#### 🐧 Operating system")
+        st.markdown("- **Ubuntu Server 24.04 LTS (Noble Numbat), 64-bit.** Standard support runs to 2029, and to 2034 with Ubuntu Pro. It ships Python 3.12, PostgreSQL 16 and a current Nginx, so no custom builds are needed. "
+                    "Check the current LTS release at deployment time and validate before choosing a newer one.\n"
+                    "- **Starter single server** for a first proof at about 50,000 documents: 16 vCPU, 64 GB RAM, 1 TB NVMe, everything on one host.\n"
+                    "- **GPU:** not required while models are used through an API. Only needed (one 24 GB card) if embeddings and the re-ranker are self-hosted.\n"
+                    "- **Security baseline:** private network, access by SSO or VPN, firewall allowing 443 only, encrypted disks, secrets in a vault, automatic security patching.\n"
+                    "- **Targets:** 99.5% availability in working hours, recovery point 15 minutes, recovery time 4 hours.")
+
+    with t4:
+        st.markdown("#### 🗓️ Timeline: about 12 weeks with cloud and AI tools")
+        st.markdown(gantt([("0 · Discovery & sizing", 1, 1), ("1 · Cloud foundation & SSO", 2, 3), ("2 · Ingestion pipeline & bulk import", 3, 6),
+                           ("3 · Hybrid search & evaluation", 6, 8), ("4 · Backend refactor & audit", 4, 8),
+                           ("5 · Security, load test & UAT", 9, 10), ("6 · Go-live & hypercare", 11, 12)]), unsafe_allow_html=True)
+        st.write("")
+        st.markdown(html_table(["Phase", "Weeks", "What gets built", "What saves time"], [
+            ["0 Discovery", "1", "Sample of 1,000 documents, data classification, cloud and model choice, success measures", "AI scripts to profile the sample"],
+            ["1 Foundation", "2–3", "Ubuntu 24.04 servers, PostgreSQL + pgvector, file storage, Nginx/TLS, Docker, CI/CD, single sign-on", "Managed cloud services; AI-drafted Terraform, Docker and pipeline files"],
+            ["2 Ingestion", "3–6", "Job queue and workers, OCR, tagging, duplicate and version detection, embeddings, bulk import of 200,000 documents", "AI-assisted parsers and tests; batch model APIs; workers scaled up for the load"],
+            ["3 Search", "6–8", "Hybrid retrieval, re-ranker, evaluation set of 100+ questions, tuning", "AI-generated test questions and automated scoring"],
+            ["4 Backend", "4–8", "FastAPI services, database schema and migrations, row-level access, audit tables, existing screens ported", "AI coding assistants for boilerplate, unit tests and migration scripts"],
+            ["5 Assurance", "9–10", "Penetration test, load test at 200 users, backup and restore drill, user acceptance testing", "Automated test generation; Locust or k6 load scripts"],
+            ["6 Go-live", "11–12", "Training, phased rollout, monitoring, two weeks of close support", "AI-written runbooks and user guides"],
+        ], ["14%", "8%", "50%", "28%"]), unsafe_allow_html=True)
+        st.markdown(html_table(["Scenario", "Calendar time"], [
+            ["Fast track (everything approved up front, few scanned files)", "≈ 8 weeks"],
+            ["Realistic (plan above)", "≈ 12 weeks"],
+            ["Conservative (many scans, slow approvals, API limits)", "≈ 16 weeks"],
+            ["Same scope without AI coding tools and managed cloud services", "≈ 5–6 months (indicative)"],
+            ["Bulk indexing of 200,000 documents (inside phase 2)", "≈ 2–4 days of processing"],
+        ], ["62%", "38%"]), unsafe_allow_html=True)
+        st.caption("Assumes one senior developer, one DevOps/backend engineer at about half time, and a business tester; cloud account and AI contract approved by week 2. "
+                   "Main risks: share of scanned files, AI provider rate limits, data-classification approval and SSO approval. Re-estimate after discovery.")
+
+
+def render_contact() -> None:
+    st.markdown('<div class="hero"><h2>✉️ Contact us</h2><p>Questions, bugs or ideas? We want to hear from pilot users.</p></div>', unsafe_allow_html=True)
+    p1, p2 = st.columns(2, gap="medium")
+    p1.markdown('<div class="person"><div class="nm">Nadeem Sohail</div><div class="rl">Project Lead • Library Automation Expert</div>'
+                '<div class="ct">✉️ <a href="mailto:nadeem.sohail@tmcltd.com">nadeem.sohail@tmcltd.com</a><br>'
+                '💬 WhatsApp: <a href="https://wa.me/923014236817" target="_blank" rel="noopener">+92 301 4236817</a></div></div>', unsafe_allow_html=True)
+    p2.markdown('<div class="person"><div class="nm">Saif Ullah Tarar</div><div class="rl">Practice Head • Head of AI Engineering</div>'
+                '<div class="ct">✉️ <a href="mailto:saif.ullah@tmcltd.com">saif.ullah@tmcltd.com</a></div></div>', unsafe_allow_html=True)
+    st.write("")
+    st.markdown("#### 🛟 Internal support")
+    url = secret("HELPDESK_URL")
+    if url:
+        st.link_button("Open the L&OD / IT Helpdesk", str(url))
+    else:
+        st.info("For access, password or technical problems, contact the L&OD or IT Helpdesk. "
+                "(An admin can add a direct link by setting HELPDESK_URL in the app secrets.)")
+    st.markdown("#### 💬 Send feedback")
+    with st.form("feedback_form", clear_on_submit=True):
+        cat = st.selectbox("Type", ["Bug", "Feature request", "Question", "Praise"])
+        msg = st.text_area("What would you like to tell us?", max_chars=1000, height=140,
+                           placeholder="Describe what happened or what you would like to see. Please do not paste confidential client data.")
+        sent = st.form_submit_button("📨 Submit feedback", type="primary")
+    if sent:
+        if len(msg.strip()) < 5:
+            st.error("Please write a little more so we can act on it.")
+        else:
+            audit("user_feedback", category=cat, message=msg.strip())
+            st.success("Thank you. Your feedback was recorded for the project team.")
+
+# ============================================================================
+# WORKSPACE
+# ============================================================================
+if PAGE == "Workspace":
+    col_src, col_mid, col_studio = st.columns([1.25, 2.3, 1.2], gap="medium")
+
+    # ---------------- LEFT: SOURCES ----------------
+    with col_src:
+        with st.container(height=PANEL_H, border=True):
+            st.markdown('<div class="panel-title">📁 Sources</div>', unsafe_allow_html=True)
+            for kind, msg in ss_.flash:
+                getattr(st, kind)(msg)
+            ss_.flash = []
+
+            with st.form("search_form"):
+                q = st.text_input("Search", placeholder="Search the library: client, SAP module, topic…", label_visibility="collapsed")
+                go = st.form_submit_button("🔍 Search library", type="primary", use_container_width=True)
+
+            with st.expander("🎚️ Filters"):
+                f_client = st.multiselect("🏢 Client", sorted({d["meta"]["client"] for d in visible}), key="f_client")
+                f_type = st.multiselect("📑 Document type", sorted({d["meta"]["doc_type"] for d in visible}), key="f_type")
+                f_mod = st.multiselect("🧩 SAP module", sorted({d["meta"]["sap_module"] for d in visible}), key="f_mod")
+                f_phase = st.multiselect("🪜 Phase", sorted({d["meta"]["phase"] for d in visible}), key="f_phase")
+                f_old = st.toggle("🕘 Include superseded versions", value=False, key="f_old")
+
+            def passes(d):
+                m = d["meta"]
+                return ((not f_client or m["client"] in f_client) and (not f_type or m["doc_type"] in f_type)
+                        and (not f_mod or m["sap_module"] in f_mod) and (not f_phase or m["phase"] in f_phase)
+                        and (f_old or d["status"] == "Current"))
+
+            candidates = [d for d in visible if passes(d)]
+            if go:
+                if q.strip():
+                    t0 = time.time()
+                    ss_.results = {"label": f"Results for “{q.strip()}”", "items": search_docs(q, visible, tax)}
+                    audit("search", query=q.strip(), hits=len(ss_.results["items"]), seconds=round(time.time() - t0, 2))
+                else:
+                    ss_.results = None
+
+            allowed = {d["id"] for d in candidates}
+            if ss_.results:
+                shown = [it for it in ss_.results["items"] if it["id"] in allowed and it["id"] in by_id]
+                label = f"{ss_.results['label']} - {len(shown)} document(s)"
+            else:
+                shown = [{"id": d["id"], "rel": None, "page": None, "snippet": ""}
+                         for d in sorted(candidates, key=lambda x: x["uploaded_at"], reverse=True)]
+                label = f"Library - {len(shown)} document(s)"
+            shown = shown[:60]
+
+            st.caption(label)
+            if ss_.results:
+                st.button("✖️ Clear search", on_click=clear_results, use_container_width=True)
+            if shown:
+                a, b = st.columns(2)
+                a.button("☑️ Select all", on_click=select_all, args=([s["id"] for s in shown],), use_container_width=True)
+                b.button("🧹 Clear", on_click=clear_selection, use_container_width=True)
+            else:
+                st.info("No documents yet. Add documents below, or loosen the filters." if not LIB else "Nothing matches. Try other words or clear the filters.")
+
+            for it in shown:
+                d = by_id[it["id"]]
+                m = d["meta"]
+                key = f"sel_{d['id']}"
+                if key not in ss_:
+                    ss_[key] = d["id"] in ss_.selected
+                c1, c2 = st.columns([1, 9])
+                c1.checkbox("select", key=key, on_change=toggle, args=(d["id"],), label_visibility="collapsed")
+                badge = '<span class="chip ok">✅ Current</span>' if d["status"] == "Current" else '<span class="chip old">⚠️ Superseded</span>'
+                body = (f'<div class="doc-title">{esc(m["doc_title"])}</div>{badge}{chip("📑 " + m["doc_type"], "p")}'
+                        f'{chip("🏢 " + m["client"])}{chip("🧩 " + m["sap_module"])}{chip("🪜 " + m["phase"])}')
+                if it["rel"] is not None:
+                    body += (f'<div class="relbar"><div style="width:{int(it["rel"])}%"></div></div><div class="small">🎯 Relevance {int(it["rel"])}%'
+                             + (f' • 📍 {esc(d["unit"])} {int(it["page"])}' if it["page"] else "") + "</div>")
+                    if it["snippet"]:
+                        body += f'<div class="snip">{esc(it["snippet"])}</div>'
+                c2.markdown(body, unsafe_allow_html=True)
+
+            st.markdown("---")
+            if ROLES[ss_.user["role"]]["upload"]:
+                with st.expander("➕ Add documents to the library"):
+                    files = st.file_uploader("Files", type=list(EXTRACTORS), accept_multiple_files=True,
+                                             key=f"up_{ss_.up_key}", label_visibility="collapsed",
+                                             help=f"Up to {MAX_UPLOAD_MB} MB per file.")
+                    restricted = st.checkbox("🔒 Restricted - visible to Admin and SAP: MPO only")
+                    ok = st.checkbox("I confirm these files are sanitized and approved for Knowledge Lens")
+                    if st.button("📤 Add to library", disabled=not (files and ok), use_container_width=True):
+                        for f in files:
+                            with st.spinner(f"Reading and tagging {f.name}…"):
+                                try:
+                                    ss_.flash.append(ingest(f, restricted, tax, LIB))
+                                except Exception as e:
+                                    LOG.exception("ingest failed")
+                                    ss_.flash.append(("error", f"{f.name}: {e}"))
+                        ss_.up_key += 1
+                        st.rerun()
+            else:
+                st.caption("📤 Adding documents is available to the Admin and SAP: MPO roles.")
+
+    # ---------------- CENTRE: SUMMARY + CHAT ----------------
+    with col_mid:
+        with st.container(height=PANEL_H, border=True):
+            n = len(selected_docs)
+            h1, h2 = st.columns([3, 2])
+            h1.markdown(f"<div class='panel-title'>📌 Project at a glance</div><span class='small'>{n} source(s) selected</span>", unsafe_allow_html=True)
+            if h2.button("✨ Summarize selected", type="primary", disabled=n == 0, use_container_width=True):
+                with st.spinner("Summarizing…"):
+                    try:
+                        ss_.summary = make_summary(selected_docs)
+                        audit("summary", docs=[d["name"] for d in selected_docs])
+                    except Exception as e:
+                        LOG.exception("summary failed")
+                        st.error(f"Could not summarize: {e}")
+
+            if ss_.summary:
+                s = ss_.summary
+                st.markdown(f'<div class="glance"><h4>Summary of {len(s["docs"])} document(s)</h4>{esc(s["overview"])}</div>', unsafe_allow_html=True)
+                cols = st.columns(2)
+                for i, (k, t) in enumerate([("key_decisions", "Key decisions"), ("deliverables", "Deliverables"), ("timeline", "Timeline"), ("risks", "Risks")]):
+                    if s[k]:
+                        with cols[i % 2]:
+                            st.markdown(f"**{t}**")
+                            st.markdown("\n".join(f"- {x}" for x in s[k]))
+            else:
+                st.info("Search, tick the documents you need, then press Summarize selected.")
+
+            ch1, ch2 = st.columns([3, 1])
+            ch1.markdown('<div class="panel-title">💬 Chat with the selected documents</div>', unsafe_allow_html=True)
+            ch2.button("🧹 Clear chat", on_click=clear_chat, disabled=not ss_.chat, use_container_width=True)
+            chat_box = st.container(height=330, border=False)
+            QUICK = [("⚠️ Key risks", "What are the key risks and issues?"), ("📅 Timeline", "What is the timeline and key milestones?"),
+                     ("📦 Deliverables", "What are the main deliverables?"), ("🔁 Compare", "Compare these documents: similarities and differences.")]
+            for (lab, text), qc in zip(QUICK, st.columns(4)):
+                qc.button(lab, key=f"quick_{lab}", disabled=n == 0, on_click=lambda t=text: ss_.__setitem__("pending_q", t), use_container_width=True)
+
+            # pill chat box: the "N sources" label is drawn by CSS next to the send button
+            st.markdown(f"<style>div[data-testid='stChatInput']::after{{content:'{n} source{'s' if n != 1 else ''}';}}</style>", unsafe_allow_html=True)
+            prompt = st.chat_input("Ask a question or create something" if n else "Select sources to start chatting", disabled=n == 0,
+                                   max_chars=2000) or ss_.pop("pending_q", None)
+
+            with chat_box:
+                if not ss_.chat and not prompt:
+                    st.caption("Answers include citations like [S1] that point to the document and page.")
+                for i, c in enumerate(ss_.chat):
+                    with st.chat_message("user"):
+                        st.write(c["q"])
+                    with st.chat_message("assistant"):
+                        st.write(c["a"])
+                        render_turn_extras(i, c)
+                if prompt:
+                    prompt = prompt.strip()
+                    with st.chat_message("user"):
+                        st.write(prompt)
+                    with st.chat_message("assistant"):
+                        t0 = time.time()
+                        try:
+                            hits = retrieve(retrieval_query(prompt, ss_.chat), selected_docs, tax, k=8)
+                            if hits:
+                                ans = st.write_stream(stream_answer(prompt, hits, ss_.chat))
+                            else:
+                                ans = "The selected documents contain no readable text to answer from."
+                                st.write(ans)
+                            turn = {"q": prompt, "a": ans, "cites": build_cites(ans, hits, prompt) if hits else [],
+                                    "seconds": round(time.time() - t0, 1), "rating": None, "uid": uuid.uuid4().hex, "ok": True}
+                            audit("ask", question=prompt, seconds=turn["seconds"], docs=len(selected_docs))
+                        except Exception as e:
+                            LOG.exception("question failed")
+                            ans = f"Sorry, the question failed ({type(e).__name__}). Please try again."
+                            st.error(ans)
+                            turn = {"q": prompt, "a": ans, "cites": [], "seconds": 0, "rating": 0, "uid": uuid.uuid4().hex, "ok": False}
+                        ss_.chat.append(turn)
+                        render_turn_extras(len(ss_.chat) - 1, turn)
+
+    # ---------------- RIGHT: STUDIO ----------------
+    with col_studio:
+        with st.container(height=PANEL_H, border=True):
+            st.markdown('<div class="panel-title">🎛️ Studio</div>', unsafe_allow_html=True)
+
+            with st.expander("🧭 Find similar past work", expanded=False):
+                rfp = st.file_uploader("Upload an RFP or brief", type=["pdf", "docx", "pptx", "txt"], key=f"rfp_{ss_.rfp_key}", label_visibility="collapsed")
+                if st.button("🔎 Find similar documents", disabled=rfp is None, use_container_width=True):
+                    try:
+                        if len(rfp.getvalue()) > MAX_UPLOAD_MB * 1024 * 1024:
+                            raise ValueError(f"file larger than {MAX_UPLOAD_MB} MB")
+                        pages, _, _ = EXTRACTORS[Path(rfp.name).name.rsplit(".", 1)[-1].lower()](rfp.getvalue())
+                        words = Counter(t for t in tok(" ".join(pages)[:20000]) if len(t) > 3)
+                        ss_.results = {"label": f"Similar to “{Path(rfp.name).name}”",
+                                       "items": search_docs(" ".join(w for w, _ in words.most_common(40)), visible, tax)}
+                        audit("similar_search", file=Path(rfp.name).name)
+                        st.success("Matches are listed under Sources.")
+                    except Exception as e:
+                        st.error(f"Could not read the brief: {e}")
+
+            st.markdown('<div class="panel-title">📝 Generate report</div>', unsafe_allow_html=True)
+            rtype = st.selectbox("Report type", list(REPORT_TYPES), label_visibility="collapsed")
+            focus = st.text_area("Focus", placeholder="Optional: what should the report concentrate on?", height=80, max_chars=1000)
+            if st.button("🚀 Generate report", type="primary", disabled=not selected_docs, use_container_width=True):
+                with st.spinner("Writing the report in 4 formats…"):
+                    try:
+                        ss_.report = make_report(rtype, focus.strip(), selected_docs, tax)
+                        audit("report", rtype=rtype, docs=[d["name"] for d in selected_docs])
+                    except Exception as e:
+                        LOG.exception("report failed")
+                        st.error(f"Could not generate the report: {e}")
+            if not selected_docs:
+                st.caption("Select at least one source to enable reports.")
+
+            if ss_.report:
+                rp = ss_.report
+                st.success(rp["data"]["title"])
+                MIME = {"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "pdf": "application/pdf"}
+                LAB = {"docx": "📄 Word", "pptx": "📽️ PowerPoint", "xlsx": "📊 Excel", "pdf": "📕 PDF"}
+                g = st.columns(2)
+                for i, ext in enumerate(["docx", "pptx", "xlsx", "pdf"]):
+                    g[i % 2].download_button(LAB[ext], rp["files"][ext], file_name=f"{rp['stem']}.{ext}", mime=MIME[ext],
+                                             key=f"dl_{ext}", use_container_width=True)
+                if st.button("👁️ Preview report", key="open_preview", use_container_width=True):
+                    report_preview(rp)
+
+            if selected_docs:
+                st.markdown('<div class="panel-title">🗂️ Selected sources</div>', unsafe_allow_html=True)
+                for d in selected_docs:
+                    m = d["meta"]
+                    with st.expander(m["doc_title"]):
+                        st.markdown(f"🏢 **Client:** {esc(m['client'])}  \n📑 **Type:** {esc(m['doc_type'])}  \n🧩 **SAP module:** {esc(m['sap_module'])}  \n"
+                                    f"🪜 **Phase:** {esc(m['phase'])}  \n🔖 **Version:** {esc(m['version'] or '-')}  \n✍️ **Author:** {esc(d['author'])}  \n"
+                                    f"{'✅' if d['status'] == 'Current' else '⚠️'} **Status:** {esc(d['status'])}  \n👤 **Added by:** {esc(d['uploaded_by'])}")
+                        if m["summary"]:
+                            st.caption(m["summary"])
+                        nv = by_id.get(d.get("superseded_by"))
+                        if d["status"] == "Superseded" and nv and can_see(nv):
+                            st.warning(f"Newer version: {nv['meta']['doc_title']}")
+                        p = Path(d.get("path") or "")
+                        if d.get("path") and p.is_file() and DATA.resolve() in p.resolve().parents:  # no path traversal
+                            st.download_button("⬇️ Download original", p.read_bytes(), file_name=d["name"], key=f"orig_{d['id']}")
+                        bkey = f"brief_{d['id']}"
+                        if st.button("📝 One-page brief", key=f"bbtn_{d['id']}", help="AI TL;DR of just this document"):
+                            with st.spinner("Writing the brief…"):
+                                try:
+                                    ss_[bkey] = make_doc_brief(d)
+                                    audit("doc_brief", doc=d["name"])
+                                except Exception as e:
+                                    LOG.exception("brief failed")
+                                    st.error(f"Could not write the brief: {e}")
+                        if ss_.get(bkey):
+                            st.markdown(ss_[bkey])
+                            st.download_button("⬇️ Download brief (.md)", ss_[bkey], file_name=f"{Path(d['name']).stem}_brief.md",
+                                               mime="text/markdown", key=f"bdl_{d['id']}")
+
+
+# ---- user-management callbacks -------------------------------------------------
+def _msg(kind, text):
+    ss_.setdefault("user_msgs", []).append((kind, text))
+
+
+def _active_admins(users):
+    return [k for k, v in users.items() if v["role"] == ROLE_ADMIN and v["active"]]
+
+
+def cb_create_user():
+    with STORE.lock:
+        users = load_users()
+        name, un = ss_.get("nu_name", "").strip(), ss_.get("nu_user", "").strip().lower()
+        role, pw = ss_.get("nu_role", ROLE_CONS), ss_.get("nu_pw", "")
+        mods = ss_.get("nu_mods", []) if role == ROLE_CONS else []
+        if not name or not un:
+            return _msg("error", "Enter the person's full name and a username.")
+        if not re.fullmatch(r"[a-z0-9._-]{3,32}", un):
+            return _msg("error", "Username must be 3-32 characters: lowercase letters, numbers, dot, dash or underscore.")
+        if un in users:
+            return _msg("error", f"The username “{un}” already exists.")
+        if pw_problem(pw):
+            return _msg("error", pw_problem(pw))
+        if role == ROLE_CONS and not mods:
+            return _msg("error", "Select at least one SAP module, otherwise the consultant would see no documents.")
+        users[un] = new_user_record(un, name, role, mods, pw, True, ss_.user["username"])
+        save_users(users)
+    audit("user_create", target=un, role=role, modules=mods)
+    ss_.shown_pw = (un, pw)
+    _msg("success", f"✅ User {name} ({un}) created as {role}.")
+    for k in ("nu_name", "nu_user", "nu_pw"):
+        ss_[k] = ""
+    ss_["nu_mods"] = []
+
+
+def cb_save_user(sel):
+    with STORE.lock:
+        users = load_users()
+        u = users[sel]
+        role, active = ss_[f"mu_role_{sel}"], ss_[f"mu_active_{sel}"]
+        mods = ss_.get(f"mu_mods_{sel}", []) if role == ROLE_CONS else []
+        if sel == ss_.user["username"] and (role != ROLE_ADMIN or not active):
+            return _msg("error", "You cannot remove your own admin role or disable your own account.")
+        was_active = u["active"]
+        u.update(name=ss_[f"mu_name_{sel}"].strip() or u["name"], role=role, modules=mods, active=active)
+        if not _active_admins(users):
+            return _msg("error", "At least one active Admin must remain.")
+        if active and not was_active:
+            u.update(fails=0, locked_until=0)
+        save_users(users)
+    audit("user_update", target=sel, role=role, modules=mods, active=active)
+    _msg("success", f"💾 Saved changes for {sel}.")
+
+
+def cb_reset_pw(sel):
+    pw = gen_password()
+    with STORE.lock:
+        users = load_users()
+        set_pw(users[sel], pw)
+        users[sel].update(must_change=True, fails=0, locked_until=0)
+        save_users(users)
+    audit("password_reset", target=sel)
+    ss_.shown_pw = (sel, pw)
+    _msg("success", f"🔄 Password reset for {sel}.")
+
+
+def cb_delete_user(sel):
+    with STORE.lock:
+        users = load_users()
+        if sel == ss_.user["username"]:
+            return _msg("error", "You cannot delete your own account.")
+        gone = users.pop(sel)
+        if not _active_admins(users):
+            return _msg("error", "At least one active Admin must remain.")
+        save_users(users)
+    audit("user_delete", target=sel, role=gone["role"])
+    _msg("success", f"🗑️ User {sel} deleted.")
+
+
+# ============================================================================
+# ADMIN & PILOT METRICS
+# ============================================================================
+if PAGE == "Admin":
+    if not ss_.user["admin"]:
+        st.info("🔒 The admin area is available to the Admin role only.")
+    else:
+        PAL = ["#0F6B45", "#1FA67A", "#F2A93B", "#3B82F6", "#E8590C", "#8E5BD0"]
+        log = read_audit()
+        ldf = pd.DataFrame(log) if log else pd.DataFrame(columns=["ts", "user", "action"])
+        asks = [r for r in log if r["action"] == "ask"]
+        fb = [r for r in log if r["action"] == "feedback"]
+        n_search = sum(r["action"] == "search" for r in log)
+        n_rep = sum(r["action"] == "report" for r in log)
+        n_cur = sum(d["status"] == "Current" for d in LIB)
+        avg_t = f"{sum(r.get('seconds', 0) for r in asks) / len(asks):.1f}s" if asks else "-"
+        helpful = f"{100 * sum(r.get('rating') == 1 for r in fb) / len(fb):.0f}%" if fb else "-"
+        n_users = ldf["user"].nunique() if len(ldf) else 0
+
+        t_dash, t_users, t_lib, t_vocab, t_audit = st.tabs(["📊 Dashboard", "👥 Users & roles", "📚 Library", "🏷️ Vocabulary", "🧾 Audit log"])
+        with t_dash:
+            st.markdown("#### 📊 Pilot dashboard")
+            kpis = [("📚", "Documents", len(LIB), f"{n_cur} current • {len(LIB) - n_cur} superseded", "#0F6B45", "#1FA67A"),
+                    ("💬", "Questions asked", len(asks), f"{n_users} active user(s)", "#2563EB", "#3B82F6"),
+                    ("🔍", "Searches", n_search, "library searches run", "#7C3AED", "#A78BFA"),
+                    ("⏱️", "Avg. answer time", avg_t, f"manual baseline ≈ {BASELINE_MIN:g} min", "#D97706", "#F2A93B"),
+                    ("👍", "Helpful answers", helpful, f"{len(fb)} rating(s) given", "#059669", "#34D399"),
+                    ("📝", "Reports generated", n_rep, "Word • PPT • Excel • PDF", "#DC2626", "#F97316")]
+            for c, (ic, lab, val, sub, c1, c2) in zip(st.columns(6), kpis):
+                c.markdown(f'<div class="kpi" style="background:linear-gradient(135deg,{c1},{c2})"><div class="ic">{ic}</div>'
+                           f'<div class="v">{esc(val)}</div><div class="l">{esc(lab)}</div><div class="s">{esc(sub)}</div></div>', unsafe_allow_html=True)
+            saved_hrs = sum(max(BASELINE_MIN - r.get("seconds", 0) / 60, 0) for r in asks) / 60
+            st.markdown(f'<div class="glance" style="margin-top:12px"><h4>⏳ Estimated time saved</h4>'
+                        f'<span style="font-size:2.2rem;font-weight:800;color:#0F6B45">{saved_hrs:.1f} hours</span> '
+                        f'<span class="small">= {len(asks)} answered question(s) × (manual baseline of {BASELINE_MIN:g} min − actual answer time). '
+                        f'An estimate: replace the baseline with your measured November figure via MANUAL_BASELINE_MIN.</span></div>',
+                        unsafe_allow_html=True)
+
+            def donut(rows, colors_, title):
+                st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
+                df_ = pd.DataFrame(rows, columns=["label", "count"])
+                df_ = df_[df_["count"] > 0]
+                if df_.empty:
+                    st.caption("No data yet.")
+                    return
+                ch = alt.Chart(df_).mark_arc(innerRadius=55, outerRadius=100).encode(
+                    theta="count:Q", color=alt.Color("label:N", scale=alt.Scale(domain=list(df_["label"]), range=colors_[:len(df_)]),
+                                                     legend=alt.Legend(orient="bottom", title=None)),
+                    tooltip=["label", "count"]).properties(height=260)
+                st.altair_chart(ch, use_container_width=True)
+
+            def hbar(counter, title, color):
+                st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
+                if not counter:
+                    st.caption("No data yet.")
+                    return
+                df_ = pd.DataFrame(counter.most_common(8), columns=["label", "count"])
+                ch = alt.Chart(df_).mark_bar(cornerRadiusEnd=5, color=color).encode(
+                    x=alt.X("count:Q", title=None, axis=alt.Axis(tickMinStep=1)), y=alt.Y("label:N", sort="-x", title=None),
+                    tooltip=["label", "count"]).properties(height=260)
+                st.altair_chart(ch, use_container_width=True)
+
+            r1a, r1b = st.columns([3, 2])
+            with r1a:
+                st.markdown('<div class="chart-title">📈 Activity over time</div>', unsafe_allow_html=True)
+                ACTS = ["search", "ask", "summary", "report", "upload"]
+                act = ldf[ldf["action"].isin(ACTS)].copy() if len(ldf) else ldf
+                if len(act):
+                    act["day"] = pd.to_datetime(act["ts"]).dt.floor("D")
+                    grp = act.groupby(["day", "action"]).size().reset_index(name="count")
+                    ch = alt.Chart(grp).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
+                        x=alt.X("day:T", title=None, axis=alt.Axis(format="%d %b")), y=alt.Y("count:Q", title=None, axis=alt.Axis(tickMinStep=1)),
+                        color=alt.Color("action:N", scale=alt.Scale(domain=ACTS, range=PAL[:5]), legend=alt.Legend(orient="bottom", title=None)),
+                        tooltip=["day:T", "action", "count"]).properties(height=260)
+                    st.altair_chart(ch, use_container_width=True)
+                else:
+                    st.caption("No activity yet.")
+            with r1b:
+                up = sum(r.get("rating") == 1 for r in fb)
+                down = sum(r.get("rating") == -1 for r in fb)
+                donut([("👍 Helpful", up), ("👎 Not helpful", down), ("Not rated", max(len(asks) - len(fb), 0))],
+                      ["#1FA67A", "#E8590C", "#C8CDD6"], "🎯 Answer feedback")
+
+            r2a, r2b, r2c = st.columns(3)
+            with r2a:
+                hbar(Counter(d["meta"]["doc_type"] for d in LIB), "📑 Documents by type", PAL[0])
+            with r2b:
+                hbar(Counter(d["meta"]["client"] for d in LIB), "🏢 Documents by client", PAL[3])
+            with r2c:
+                donut(list(Counter(d["meta"]["sap_module"] for d in LIB).items()), PAL, "🧩 Documents by SAP module")
+
+            r3a, r3b = st.columns([2, 3])
+            with r3a:
+                hbar(Counter(str(r.get("query", "")).lower() for r in log if r["action"] == "search"), "🔎 Top search terms", PAL[2])
+            with r3b:
+                st.markdown('<div class="chart-title">⏱️ Answer time per question (seconds)</div>', unsafe_allow_html=True)
+                if asks:
+                    tdf = pd.DataFrame({"question": range(1, len(asks) + 1), "seconds": [r.get("seconds", 0) for r in asks],
+                                        "text": [str(r.get("question", ""))[:60] for r in asks]})
+                    ch = alt.Chart(tdf).mark_area(line={"color": PAL[4]}, color=alt.Gradient(
+                        gradient="linear", stops=[alt.GradientStop(color="#F9C9A8", offset=0), alt.GradientStop(color="#FFF3EA", offset=1)],
+                        x1=1, x2=1, y1=1, y2=0)).encode(
+                        x=alt.X("question:O", title="Question #"), y=alt.Y("seconds:Q", title=None), tooltip=["question", "seconds", "text"]).properties(height=260)
+                    st.altair_chart(ch + ch.mark_point(color=PAL[4], filled=True, size=70), use_container_width=True)
+                else:
+                    st.caption("Ask a question in the Workspace to see timings.")
+
+        with t_users:
+            users_db = load_users()
+            st.markdown("#### 👥 Users & roles")
+            for c, (rn, rv) in zip(st.columns(3), ROLES.items()):
+                c.markdown(f'<div class="rolecard"><div class="ic">{rv["icon"]}</div><b>{esc(rn)}</b><div class="s">{esc(rv["desc"])}</div></div>', unsafe_allow_html=True)
+            st.write("")
+            for kind, msg in ss_.pop("user_msgs", []):
+                getattr(st, kind)(msg)
+            if ss_.get("shown_pw"):
+                su, sp = ss_.pop("shown_pw")
+                st.success(f"🔑 Temporary password for **{su}** (shown once - copy it now and share it securely). The user must change it at first sign-in.")
+                st.code(sp, language=None)
+
+            if users_db:
+                st.dataframe(pd.DataFrame([{
+                    "username": u["username"], "name": u["name"], "role": f"{ROLES.get(u['role'], ROLES[ROLE_CONS])['icon']} {u['role']}",
+                    "modules": ", ".join(module_label(m) for m in u["modules"]) if u["role"] == ROLE_CONS else "all documents",
+                    "status": "✅ Active" if u["active"] else "⛔ Disabled",
+                    "password": "⏳ must change" if u["must_change"] else "set",
+                    "last sign-in": u.get("last_login") or "never"} for u in users_db.values()]),
+                    use_container_width=True, hide_index=True)
+
+            st.markdown("##### ➕ Add a person")
+            a1, a2 = st.columns(2)
+            a1.text_input("Full name", key="nu_name")
+            a2.text_input("Username", key="nu_user", help="3-32 characters: lowercase letters, numbers, dot, dash or underscore.")
+            b1, b2 = st.columns(2)
+            nrole = b1.selectbox("Role", list(ROLES), index=2, key="nu_role")
+            if nrole == ROLE_CONS:
+                b2.multiselect("SAP modules this person may access", tax["sap_modules"], format_func=module_label, key="nu_mods")
+            else:
+                b2.info("This role does not need modules.")
+            p1c, p2c = st.columns([3, 1])
+            p1c.text_input("Temporary password", key="nu_pw", help="Min. 8 characters with letters and numbers. The user must change it at first sign-in.")
+            p2c.write("")
+            p2c.button("🎲 Generate", on_click=lambda: ss_.__setitem__("nu_pw", gen_password()), use_container_width=True)
+            st.button("➕ Create user", type="primary", on_click=cb_create_user)
+
+            if users_db:
+                st.markdown("##### ✏️ Manage a person")
+                sel = st.selectbox("Select user", list(users_db), format_func=lambda k: f"{users_db[k]['name']} ({k})", key="mu_sel")
+                u = users_db[sel]
+                m1, m2 = st.columns(2)
+                m1.text_input("Full name", u["name"], key=f"mu_name_{sel}")
+                mrole = m2.selectbox("Role", list(ROLES), index=list(ROLES).index(u["role"]) if u["role"] in ROLES else 2, key=f"mu_role_{sel}")
+                st.multiselect("SAP modules (consultants only)", tax["sap_modules"], default=[m for m in u["modules"] if m in tax["sap_modules"]],
+                               format_func=module_label, key=f"mu_mods_{sel}", disabled=mrole != ROLE_CONS)
+                st.toggle("Account active", value=u["active"], key=f"mu_active_{sel}")
+                x1, x2, x3 = st.columns(3)
+                x1.button("💾 Save changes", on_click=cb_save_user, args=(sel,), use_container_width=True)
+                x2.button("🔄 Reset password", on_click=cb_reset_pw, args=(sel,), use_container_width=True)
+                x3.button("🗑️ Delete user", on_click=cb_delete_user, args=(sel,), use_container_width=True)
+                if u["role"] == ROLE_CONS and not u["modules"]:
+                    st.warning("This consultant has no modules assigned and cannot see any documents.")
+
+        with t_lib:
+            st.markdown("#### Library")
+            if LIB:
+                st.dataframe(pd.DataFrame([{"id": d["id"], "title": d["meta"]["doc_title"], "file": d["name"], "client": d["meta"]["client"],
+                                            "type": d["meta"]["doc_type"], "module": d["meta"]["sap_module"], "phase": d["meta"]["phase"],
+                                            "status": d["status"], "restricted": "🔒" if d.get("restricted") else "", "added by": d["uploaded_by"]}
+                                           for d in LIB]), use_container_width=True, hide_index=True)
+                pick = st.selectbox("Manage a document", [d["id"] for d in LIB], format_func=lambda i: by_id[i]["meta"]["doc_title"])
+                d = by_id[pick]
+                a1, a2, a3 = st.columns(3)
+                if a1.button("Mark as current", use_container_width=True):
+                    with STORE.lock:
+                        d["status"], d["superseded_by"] = "Current", None
+                        STORE.save_library()
+                    audit("status", doc=d["name"], status="Current")
+                    st.rerun()
+                if a2.button("Mark as superseded", use_container_width=True):
+                    with STORE.lock:
+                        d["status"] = "Superseded"
+                        STORE.save_library()
+                    audit("status", doc=d["name"], status="Superseded")
+                    st.rerun()
+                if a3.button("Delete document", use_container_width=True):
+                    with STORE.lock:
+                        LIB[:] = [x for x in LIB if x["id"] != pick]
+                        for x in LIB:  # a deleted successor must not leave its predecessor dangling
+                            if x.get("superseded_by") == pick:
+                                x["status"], x["superseded_by"] = "Current", None
+                        STORE.save_library()
+                    ss_.selected.discard(pick)
+                    if d.get("path"):
+                        pth = Path(d["path"])
+                        if DATA.resolve() in pth.resolve().parents:
+                            pth.unlink(missing_ok=True)
+                    audit("delete", doc=d["name"])
+                    st.rerun()
+                v1, v2 = st.columns(2)
+                restr = v1.checkbox("🔒 Restricted (Admin and SAP: MPO only)", value=d.get("restricted", False), key=f"restr_{pick}")
+                mods = tax["sap_modules"]
+                cur_mod = d["meta"]["sap_module"]
+                mod = v2.selectbox("🧩 SAP module (controls consultant access)", mods, index=mods.index(cur_mod) if cur_mod in mods else 0, key=f"mod_{pick}")
+                if st.button("💾 Save visibility"):
+                    with STORE.lock:
+                        d["restricted"], d["meta"]["sap_module"] = restr, mod
+                        STORE.save_library()
+                    audit("visibility", doc=d["name"], restricted=restr, module=mod)
+                    st.rerun()
+            else:
+                st.info("The library is empty.")
+
+        with t_vocab:
+            st.markdown("#### Controlled vocabulary")
+            st.caption("Client aliases map variants (TML, Tata Motors Ltd) to one record. The glossary expands TMC terms in searches.")
+            txt = st.text_area("taxonomy.json", json.dumps(tax, indent=2, ensure_ascii=False), height=300)
+            if st.button("Save vocabulary"):
+                try:
+                    t = json.loads(txt)
+                    assert isinstance(t, dict) and all(k in t for k in DEFAULT_TAXONOMY), "missing required keys"
+                    write_json("taxonomy.json", t)
+                    audit("taxonomy_update")
+                    st.success("Saved.")
+                except Exception as e:
+                    st.error(f"Invalid vocabulary: {e}")
+
+        with t_audit:
+            st.markdown("#### Audit log")
+            if log:
+                full = pd.DataFrame(log)
+                st.dataframe(full.tail(300).iloc[::-1], use_container_width=True, hide_index=True)
+                st.download_button("Download audit log (CSV)", full.to_csv(index=False), file_name="audit_log.csv", mime="text/csv")
+            else:
+                st.caption("No events yet.")
+
+
+# ============================================================================
+# STATIC PAGES + FOOTER
+# ============================================================================
+if PAGE == "About":
+    render_about()
+elif PAGE == "How":
+    render_howto()
+elif PAGE == "Tech":
+    render_tech()
+elif PAGE == "Contact":
+    render_contact()
+render_footer()
