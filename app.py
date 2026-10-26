@@ -3,8 +3,8 @@ TMC Knowledge Lens v2 - multi-tenant, search-first, permission-aware document wo
 
 Secrets / env vars
 ------------------
-Required   : GROQ_API_KEY
-Recommended: ADMIN_USERNAME, ADMIN_PASSWORD (bootstrap admin), MODEL, KL_DATA_DIR, SESSION_TTL_MIN, MAX_UPLOAD_MB
+Required   : GITHUB_TOKEN (GitHub Models) or GROQ_API_KEY (Groq)
+Recommended: MODEL, LLM_BASE_URL, ADMIN_USERNAME, ADMIN_PASSWORD (bootstrap admin), MODEL, KL_DATA_DIR, SESSION_TTL_MIN, MAX_UPLOAD_MB
 Optional   : ALLOW_SIGNUP=true (self-service organisation sign-up), PLATFORM_ADMINS=user1,user2 (may change plans),
              SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASSWORD / SMTP_FROM (password-reset e-mails),
              AUDIT_RETENTION_DAYS, RATE_PER_MIN, MANUAL_BASELINE_MIN, HELPDESK_URL
@@ -72,7 +72,7 @@ def secret(name: str, default=None):
     return v if v not in (None, "") else os.environ.get(name, default)
 
 
-MODEL = secret("MODEL", "openai/gpt-oss-120b")
+MODEL_OVERRIDE = secret("MODEL")
 DATA = Path(secret("KL_DATA_DIR", "kl_data"))
 (DATA / "files").mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD_MB = int(secret("MAX_UPLOAD_MB", 25))
@@ -323,19 +323,28 @@ def audit(action: str, _org=None, _user=None, **detail) -> None:
 # 4. LLM client, quotas and rate limiting
 # =============================================================================
 def find_api_key():
-    key = secret("GROQ_API_KEY")
-    return str(key).strip() if key else None
+    """Accepts GITHUB_TOKEN (GitHub Models), GROQ_API_KEY (Groq) or a generic LLM_API_KEY."""
+    for name in ("GITHUB_TOKEN", "GROQ_API_KEY", "LLM_API_KEY"):
+        key = secret(name)
+        if key:
+            return str(key).strip()
+    return None
 
 
 API_KEY = find_api_key()
 if not API_KEY:
-    st.error('No Groq API key found. Add `GROQ_API_KEY = "gsk_..."` to the app secrets (or environment) and reboot.')
+    st.error('No API key found. Add `GITHUB_TOKEN = "..."` (or `GROQ_API_KEY`) to the app secrets or environment and reboot.')
     st.stop()
+
+# Provider is chosen from the key unless LLM_BASE_URL is set: gsk_... -> Groq, anything else -> GitHub Models
+IS_GROQ = API_KEY.startswith("gsk_")
+BASE_URL = str(secret("LLM_BASE_URL", "https://api.groq.com/openai/v1" if IS_GROQ else "https://models.github.ai/inference"))
+MODEL = MODEL_OVERRIDE or ("openai/gpt-oss-120b" if IS_GROQ else "openai/gpt-4.1")
 
 
 @st.cache_resource
 def get_client() -> OpenAI:
-    return OpenAI(base_url="https://api.groq.com/openai/v1", api_key=API_KEY, timeout=60.0, max_retries=3)
+    return OpenAI(base_url=BASE_URL, api_key=API_KEY, timeout=60.0, max_retries=3)
 
 
 def llm(messages, json_mode=False, temperature=0.1) -> str:
