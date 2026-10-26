@@ -1,5 +1,5 @@
 """
-TMC Knowledge Lens - Enterprise Document Workspace with ISO Document Control.
+TMC Knowledge Lens - search-first, permission-aware document workspace.
 """
 from __future__ import annotations
 
@@ -40,13 +40,16 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 
 st.set_page_config(page_title="TMC Knowledge Lens", page_icon="🔍", layout="wide")
 LOG = logging.getLogger("knowledge_lens")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 # ----------------------------------------------------------------------------
 # Configuration
 # ----------------------------------------------------------------------------
 def secret(name: str, default=None):
-    try: v = st.secrets.get(name)
-    except Exception: v = None
+    try:
+        v = st.secrets.get(name)
+    except Exception:
+        v = None
     return v if v not in (None, "") else os.environ.get(name, default)
 
 MODEL = secret("MODEL", "openai/gpt-oss-120b")
@@ -129,9 +132,7 @@ div[data-testid="stVerticalBlockBorderWrapper"] { border-radius:18px; }
 .glance { background:#EAF6EF; border-left:5px solid #0F6B45; padding:14px 18px; border-radius:12px; margin-bottom:10px; }
 .glance h4 { margin:0 0 6px; color:#0F6B45; }
 .small { font-size:.8rem; color:#6B7280; }
-
-/* Fake Barcode CSS */
-.barcode { height: 30px; width: 150px; background: repeating-linear-gradient(90deg, #000, #000 2px, #fff 2px, #fff 4px, #000 4px, #000 5px, #fff 5px, #fff 8px); margin-top: 5px; border-radius: 2px;}
+.barcode { height: 20px; width: 120px; background: repeating-linear-gradient(90deg, #000, #000 2px, #fff 2px, #fff 4px, #000 4px, #000 5px, #fff 5px, #fff 8px); margin-top: 5px; border-radius: 2px;}
 
 section[data-testid="stSidebar"] { background:#1E2227 !important; border-right:1px solid #2E343B; }
 section[data-testid="stSidebar"] :is(h1,h2,h3,p,label,li,summary,small) { color:#E6E9ED !important; }
@@ -222,7 +223,7 @@ def read_audit() -> list:
     return _audit_rows(str(p), s.st_mtime_ns, s.st_size)
 
 # ----------------------------------------------------------------------------
-# DCN Generator
+# DCN & AI Generators
 # ----------------------------------------------------------------------------
 def generate_dcn(department, sap_module, doc_type):
     dept_map = {"Delivery": "DEL", "Pre-Sales": "PRE", "Management": "MGT", "AI Engineering": "AIE"}
@@ -234,9 +235,6 @@ def generate_dcn(department, sap_module, doc_type):
     next_num = len(existing) + 1
     return f"{prefix}-{next_num:03d}"
 
-# ----------------------------------------------------------------------------
-# LLM & Extraction
-# ----------------------------------------------------------------------------
 def find_api_key():
     key = secret("GROQ_API_KEY") or secret("GITHUB_TOKEN")
     if key: return str(key).strip()
@@ -307,7 +305,7 @@ def auto_tag(filename: str, text: str, tax: dict) -> dict:
 # Auth & Session State
 # ----------------------------------------------------------------------------
 ss_ = st.session_state
-for _k, _v in {"auth": None, "page": "Workspace", "selected": set(), "chat": [], "summary": None, "report": None}.items():
+for _k, _v in {"auth": None, "page": "Workspace", "selected": set(), "chat": [], "summary": None, "report": None, "uploaded_file": None, "ai_meta": {}}.items():
     ss_.setdefault(_k, _v)
 
 def hash_pw(pw: str, salt: str | None = None):
@@ -374,35 +372,47 @@ ss_.user = {"name": _me["name"], "username": _me["username"], "role": _me["role"
 with st.sidebar:
     st.markdown("### 👤 Account")
     st.markdown(f"**{esc(ss_.user['name'])}**  \n{ROLES[ss_.user['role']]['icon']} {ss_.user['role']}")
+    with st.expander("🔑 Change password"):
+        cur = st.text_input("Current password", type="password", key="cp_cur")
+        n1 = st.text_input("New password", type="password", key="cp_new")
+        n2 = st.text_input("Confirm new password", type="password", key="cp_new2")
+        if st.button("Update password", key="cp_go"):
+            with STORE.lock:
+                users = load_users()
+                me_ = users[ss_.auth]
+                if not check_pw(cur, me_):
+                    st.error("Current password is incorrect.")
+                elif n1 != n2:
+                    st.error("New passwords do not match.")
+                else:
+                    set_pw(me_, n1)
+                    save_users(users)
+                    st.success("Password updated.")
     if st.button("🚪 Log out", use_container_width=True):
         ss_.clear(); st.rerun()
     st.markdown("---")
     st.caption("TMC Knowledge Lens v1.0 (ISO Controlled)")
 
 # ----------------------------------------------------------------------------
-# Modal (Restored & Fixed)
+# Modal (HITL Upload & Edit)
 # ----------------------------------------------------------------------------
 @st.dialog("📄 Document Control", width="large")
 def document_dialog(doc_to_edit=None):
     st.write("The AI will pre-read the file and suggest metadata. You can review and approve." if not doc_to_edit else "Update document metadata below.")
     
-    # We use a callback to auto-fill the form when a file is uploaded
-    if "uploaded_file" not in st.session_state: st.session_state.uploaded_file = None
-    if "ai_meta" not in st.session_state: st.session_state.ai_meta = {}
-
     if not doc_to_edit:
         uploaded = st.file_uploader("Upload File", type=list(EXTRACTORS))
-        if uploaded and st.session_state.uploaded_file != uploaded.name:
+        if uploaded and ss_.uploaded_file != uploaded.name:
             with st.spinner("AI is reading the document to suggest tags..."):
                 raw = uploaded.getvalue()
                 ext = uploaded.name.split(".")[-1].lower()
                 pages, native_author, unit = EXTRACTORS[ext](raw)
-                st.session_state.ai_meta = auto_tag(uploaded.name, " ".join(pages)[:5000], DEFAULT_TAXONOMY)
-                st.session_state.ai_meta["author"] = native_author
-                st.session_state.uploaded_file = uploaded.name
+                ss_.ai_meta = auto_tag(uploaded.name, " ".join(pages)[:5000], DEFAULT_TAXONOMY)
+                ss_.ai_meta["author"] = native_author
+                ss_.uploaded_file = uploaded.name
+                st.rerun() # Rerun to populate form instantly
     
-    # Form fields (pre-filled with AI metadata if available)
-    m = doc_to_edit if doc_to_edit else st.session_state.ai_meta
+    m = doc_to_edit if doc_to_edit else ss_.ai_meta
     default_title = m.get("meta", {}).get("doc_title", m.get("doc_title", "")) if doc_to_edit else m.get("doc_title", "")
     default_author = m.get("author", "")
     default_summary = m.get("meta", {}).get("summary", m.get("summary", "")) if doc_to_edit else m.get("summary", "")
@@ -414,7 +424,6 @@ def document_dialog(doc_to_edit=None):
         
         c3, c4, c5 = st.columns(3)
         dept = c3.selectbox("Department", ["Delivery", "Pre-Sales", "Management", "AI Engineering", "Other"])
-        # CHANGED: Client is now a text input, not a dropdown
         client = c4.text_input("Client / Company", value=m.get("meta", {}).get("client", ""))
         sap_mod = c5.selectbox("SAP Module", DEFAULT_TAXONOMY["sap_modules"])
         
@@ -426,7 +435,7 @@ def document_dialog(doc_to_edit=None):
         restricted = st.checkbox("🔒 Restricted Access")
         
         if st.form_submit_button("💾 Approve & Save", type="primary", use_container_width=True):
-            if not doc_to_edit and not st.session_state.uploaded_file:
+            if not doc_to_edit and not ss_.uploaded_file:
                 st.error("Please upload a file.")
                 return
             
@@ -451,8 +460,8 @@ def document_dialog(doc_to_edit=None):
                         STORE.library().append(doc)
                         STORE.save_library()
                     audit("upload", doc=doc["name"], dcn=dcn)
-                    st.session_state.uploaded_file = None # Reset
-                    st.session_state.ai_meta = {}
+                    ss_.uploaded_file = None
+                    ss_.ai_meta = {}
                     st.success(f"Saved! DCN: {dcn}")
                     time.sleep(1)
                     st.rerun()
@@ -471,7 +480,7 @@ def document_dialog(doc_to_edit=None):
                 st.rerun()
 
 # ----------------------------------------------------------------------------
-# Header, Navigation & UI
+# Header & Navigation
 # ----------------------------------------------------------------------------
 st.markdown(f"""
 <div class="topbar">
@@ -495,7 +504,7 @@ with c_nav:
                     on_click=lambda p=_key: ss_.__setitem__("page", p), use_container_width=True)
 
 # ----------------------------------------------------------------------------
-# Main Workspace (3 Columns Restored)
+# Main Workspace
 # ----------------------------------------------------------------------------
 if ss_.page == "Workspace":
     col_src, col_mid, col_studio = st.columns([1.5, 2.2, 1.2], gap="medium")
@@ -503,7 +512,7 @@ if ss_.page == "Workspace":
     # LEFT: Sources
     with col_src:
         with st.container(height=PANEL_H, border=True):
-            st.markdown('<div class="panel-title">📁 Library</div>', unsafe_allow_html=True)
+            st.markdown('<div class="panel-title">📁 Library (ISO Controlled)</div>', unsafe_allow_html=True)
             for d in STORE.library():
                 c1, c2, c3 = st.columns([1, 8, 1])
                 is_sel = c1.checkbox("", key=f"sel_{d['id']}", label_visibility="collapsed")
@@ -513,7 +522,7 @@ if ss_.page == "Workspace":
                 dcn = d.get("control_no", "NO-DCN")
                 body = f'<div class="doc-title">{esc(d["meta"]["doc_title"])}</div>'
                 body += f'<div class="small">#{dcn}</div>'
-                body += f'<div class="barcode"></div>' # CSS Barcode
+                body += f'<div class="barcode"></div>' 
                 body += f'<span class="chip ok">✅ Current</span>'
                 body += f'<span class="chip">{esc(d["meta"]["client"])}</span>'
                 c2.markdown(body, unsafe_allow_html=True)
