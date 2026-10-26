@@ -75,12 +75,12 @@ BASELINE_MIN = float(secret("MANUAL_BASELINE_MIN", 12))  # minutes a manual sear
 
 ROLE_ADMIN, ROLE_MPO, ROLE_CONS = "Admin", "SAP: MPO", "SAP: Consultant"
 ROLES = {
-    ROLE_ADMIN: {"icon": "🛡️", "upload": True,
+    ROLE_ADMIN: {"icon": "🛡️", "upload": True, "edit": True,
                  "desc": "Full rights. Adds and manages users, sees every document, and manages the library, vocabulary and audit log."},
-    ROLE_MPO: {"icon": "⭐", "upload": True,
-               "desc": "Full view of all documents, including restricted ones. Can search, ask, report and upload."},
-    ROLE_CONS: {"icon": "🧑‍💻", "upload": False,
-                "desc": "Limited view: only documents of the SAP modules assigned to them. Can search, ask and report; cannot upload."},
+    ROLE_MPO: {"icon": "⭐", "upload": True, "edit": True,
+               "desc": "Full view of all documents, including restricted ones. Can search, ask, report, upload and edit metadata."},
+    ROLE_CONS: {"icon": "🧑‍💻", "upload": False, "edit": False,
+                "desc": "Limited view: only documents of the SAP modules assigned to them. Can search, ask, report, and comment; cannot edit."},
 }
 MODULE_LABELS = {"FI/CO": "Finance (FI/CO)", "HCM": "HR (HCM)", "MM": "Materials Mgmt (MM)", "SD": "Sales & Distribution (SD)",
                  "PP": "Production (PP)", "PM": "Plant Maintenance (PM)", "QM": "Quality (QM)", "WM/EWM": "Warehouse (WM/EWM)",
@@ -93,6 +93,8 @@ DEFAULT_TAXONOMY = {
     "phases": ["Pre-Sales", "Prepare", "Explore", "Realize", "Deploy", "Run", "Other"],
     "doc_types": ["Proposal", "Blueprint", "Methodology", "Cutover Plan", "Test Plan", "Fit-to-Standard",
                   "RICEFW List", "Status Report", "Training Material", "One-Page Summary", "Other"],
+    "departments": ["Finance", "HR", "Delivery", "Sales", "IT", "Legal", "Other"],
+    "security_levels": ["Internal", "Confidential", "Restricted"],
     "glossary": {
         "ricefw": "reports interfaces conversions enhancements forms workflows",
         "fit-to-standard": "fit gap standard process",
@@ -205,7 +207,7 @@ button[data-testid="baseButton-header"] { color: #ffffff !important; }
     display: flex;
     gap: 16px;
     margin-bottom: 24px;
-    align-items: stretch; /* Forces all cards to be the same height */
+    align-items: stretch;
 }
 .kpi-modern {
     background: #ffffff;
@@ -216,7 +218,7 @@ button[data-testid="baseButton-header"] { color: #ffffff !important; }
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    flex: 1; /* Takes up equal width */
+    flex: 1;
     height: 100%;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
@@ -252,7 +254,7 @@ button[data-testid="baseButton-header"] { color: #ffffff !important; }
     margin-top: 4px;
 }
 .kpi-sub {
-    font-size: 0.75rem; /* Slightly smaller to prevent wrapping */
+    font-size: 0.75rem; 
     color: #6B7280;
     margin-top: 6px;
     line-height: 1.3;
@@ -298,7 +300,6 @@ def render_footer() -> None:
 # Shared, thread-safe store (one instance per server process)
 # ----------------------------------------------------------------------------
 def atomic_write(path: Path, text: str) -> None:
-    """Write via temp file + os.replace so a crash can never leave a half-written JSON file."""
     tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex[:8]}.tmp")
     tmp.write_text(text, "utf-8")
     try:
@@ -309,8 +310,6 @@ def atomic_write(path: Path, text: str) -> None:
 
 
 class Store:
-    """In-process cache of the library with file-backed persistence, plus the shared lock and token cache."""
-
     def __init__(self):
         self.lock = threading.RLock()
         self._lib: list | None = None
@@ -365,7 +364,11 @@ def write_json(name: str, obj) -> None:
 
 def load_taxonomy() -> dict:
     t = read_json("taxonomy.json", DEFAULT_TAXONOMY)
-    return t if isinstance(t, dict) and all(k in t for k in DEFAULT_TAXONOMY) else DEFAULT_TAXONOMY
+    # Merge with defaults to ensure new fields (like departments) exist if not yet added in JSON
+    if not isinstance(t, dict): return DEFAULT_TAXONOMY
+    for k, v in DEFAULT_TAXONOMY.items():
+        if k not in t: t[k] = v
+    return t
 
 
 def load_users() -> dict:
@@ -413,21 +416,17 @@ def read_audit() -> list:
 # LLM client (cached, with timeout + retries)
 # ----------------------------------------------------------------------------
 def find_api_key():
-    """GROQ_API_KEY, legacy GITHUB_TOKEN, then any string secret (also inside [sections]) that looks like a Groq key."""
     key = secret("GROQ_API_KEY") or secret("GITHUB_TOKEN")
     if key:
         return str(key).strip()
-
     def walk(m):
         for k, v in m.items():
             if hasattr(v, "items"):
                 found = walk(v)
-                if found:
-                    return found
+                if found: return found
             elif isinstance(v, str) and (str(k).upper() in ("GROQ_API_KEY", "GROQ_KEY", "API_KEY") or v.strip().startswith("gsk_")):
                 return v.strip()
         return None
-
     try:
         return walk(st.secrets)
     except Exception:
@@ -609,7 +608,8 @@ def bm25(query_tokens: list[str], toks: list[list[str]], k1=1.5, b=0.75) -> list
 
 def meta_blob(d: dict) -> str:
     m = d["meta"]
-    return " ".join(str(m.get(k, "")) for k in ("doc_title", "client", "industry", "sap_module", "phase", "doc_type", "summary")) + " " + d["name"]
+    # Include DCN and Department in search index
+    return " ".join(str(m.get(k, "")) for k in ("dcn", "doc_title", "client", "department", "industry", "sap_module", "phase", "doc_type", "summary")) + " " + d["name"]
 
 
 def make_snippet(text: str, qtokens: list[str], width: int = 240) -> str:
@@ -733,7 +733,25 @@ def detect_versions(new: dict, library: list):
     return None, None
 
 
-def ingest(file, restricted: bool, tax: dict, library: list):
+def generate_dcn() -> str:
+    """Generates a unique Document Control Number (e.g., DCN-2026-0001)."""
+    year = datetime.now().year
+    prefix = f"DCN-{year}-"
+    # Find max existing DCN for this year
+    lib = STORE.library()
+    max_num = 0
+    for d in lib:
+        dcn = d["meta"].get("dcn", "")
+        if dcn.startswith(prefix):
+            try:
+                num = int(dcn.split("-")[-1])
+                if num > max_num: max_num = num
+            except ValueError:
+                pass
+    return f"{prefix}{max_num + 1:04d}"
+
+
+def ingest(file, sec_level: str, tax: dict, library: list):
     safe_name = Path(file.name).name
     ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
     if ext not in EXTRACTORS:
@@ -753,11 +771,18 @@ def ingest(file, restricted: bool, tax: dict, library: list):
     pages = [clean(p) for p in pages]
     if not "".join(pages).strip():
         return "warning", f"{safe_name}: no readable text (scanned PDF? OCR is needed)."
+    
     meta = auto_tag(safe_name, " ".join(pages)[:5000], tax)
+    meta["dcn"] = generate_dcn()
+    meta["department"] = tax["departments"][0]  # default to first department
+    meta["security"] = sec_level
+    meta["comments"] = []  # To hold consultant notes
+
     doc = {"id": uuid.uuid4().hex[:10], "name": safe_name, "ext": ext, "pages": pages, "unit": unit,
            "author": clean(author)[:120], "meta": meta, "hash": digest,
            "uploaded_by": st.session_state.user["name"], "uploaded_at": datetime.now().isoformat(timespec="seconds"),
-           "access": ["All"], "restricted": bool(restricted), "sanitized": True, "status": "Current", "superseded_by": None}
+           "access": ["All"], "sanitized": True, "status": "Current", "superseded_by": None}
+           
     with STORE.lock:
         kind, other = detect_versions(doc, library)
         note = ""
@@ -777,8 +802,9 @@ def ingest(file, restricted: bool, tax: dict, library: list):
             doc["path"] = ""
         library.append(doc)
         STORE.save_library()
-    audit("upload", doc=doc["name"], restricted=doc["restricted"])
-    return "success", f"Added “{meta['doc_title']}” ({meta['doc_type']}, {meta['client']}).{note}"
+    
+    audit("upload", doc=doc["name"], dcn=meta["dcn"], security=sec_level)
+    return "success", f"Added “{meta['doc_title']}” ({meta['dcn']}).{note}"
 
 
 # ----------------------------------------------------------------------------
@@ -878,7 +904,7 @@ def build_xlsx(r: dict) -> bytes:
         for row in ws.iter_rows(min_row=2):
             for c in row:
                 if isinstance(c.value, str) and c.value.startswith("="):
-                    c.data_type = "s"  # never let model/document text become a live formula
+                    c.data_type = "s"  
                 c.alignment = Alignment(wrap_text=True, vertical="top")
 
     ws = wb.active
@@ -895,10 +921,7 @@ def build_xlsx(r: dict) -> bytes:
 
 def build_pdf(r: dict) -> bytes:
     ss = getSampleStyleSheet()
-
-    def e(s):  # standard PDF fonts speak cp1252 (keeps • – “ ” €)
-        return xml_escape(str(s)).encode("cp1252", "replace").decode("cp1252")
-
+    def e(s): return xml_escape(str(s)).encode("cp1252", "replace").decode("cp1252")
     story = [Paragraph(e(r["title"]), ss["Title"]),
              Paragraph(f"Generated by TMC Knowledge Lens • {datetime.now():%d %b %Y}", ss["Italic"]), Spacer(1, 12),
              Paragraph("Executive summary", ss["Heading2"]), Paragraph(e(r["executive_summary"]), ss["BodyText"])]
@@ -938,7 +961,6 @@ QA_SYSTEM = ("You are TMC Knowledge Lens. Answer ONLY from the sources. Cite eve
 
 
 def retrieval_query(q: str, history: list) -> str:
-    """Short follow-ups ("and the dates?") borrow the previous question for retrieval."""
     if len(tok(q)) < 4 and history:
         return f"{history[-1]['q']} {q}"
     return q
@@ -976,7 +998,6 @@ def make_report(rtype: str, focus: str, docs: list, tax: dict) -> dict:
 
 
 def make_doc_brief(d: dict) -> str:
-    """One-page Markdown TL;DR of a single document."""
     m = d["meta"]
     sys = ("Write a one-page brief (max 350 words) in Markdown for a busy consultant, with these headings: "
            "## Purpose, ## Key points (5-7 bullets), ## Decisions & deliverables, ## Risks & open items, ## Where to look (cite page/section numbers). "
@@ -1039,7 +1060,6 @@ def new_user_record(username, name, role, modules, password, must_change, by) ->
 
 
 def ensure_bootstrap_admin() -> None:
-    """Admin account defined in secrets (ADMIN_USERNAME / ADMIN_PASSWORD); re-created if the user file is lost."""
     if STORE.bootstrapped:
         return
     pw = secret("ADMIN_PASSWORD")
@@ -1058,14 +1078,14 @@ def try_login(username: str, password: str):
         users, un, now = load_users(), (username or "").strip().lower(), time.time()
         u = users.get(un)
         if not u or not u["active"]:
-            hash_pw(password or "x")  # equalise timing
+            hash_pw(password or "x")
             audit("login_failed", username=un)
             return "Invalid username or password."
         if u.get("locked_until", 0) > now:
             return f"Too many attempts. Try again in {int((u['locked_until'] - now) // 60) + 1} minute(s)."
         if check_pw(password or "", u):
             if u.get("iter", 200_000) < PBKDF2_ITERS:
-                set_pw(u, password)  # transparently upgrade old hashes
+                set_pw(u, password)
             u.update(fails=0, locked_until=0, last_login=datetime.now().isoformat(timespec="seconds"))
             save_users(users)
             ss_.auth, ss_.user, ss_.last_seen = un, {"name": u["name"], "username": un}, now
@@ -1217,9 +1237,18 @@ with st.sidebar:
 
 def can_see(d: dict) -> bool:
     u = ss_.user
+    sec = d["meta"].get("security", "Internal")
+    
+    # Admin & MPO see everything
     if u["role"] in (ROLE_ADMIN, ROLE_MPO):
         return True
-    return not d.get("restricted") and d["meta"].get("sap_module") in u["modules"]
+        
+    # Consultants cannot see "Restricted"
+    if sec == "Restricted":
+        return False
+        
+    # Consultants can see "Internal" and "Confidential" if the module matches
+    return d["meta"].get("sap_module") in u["modules"]
 
 
 def chip(t, cls="") -> str:
@@ -1254,7 +1283,6 @@ def rate(idx, val):
 
 
 def render_turn_extras(i: int, c: dict) -> None:
-    """Sources expander and feedback buttons under one answer."""
     if c["cites"]:
         with st.expander("📚 Sources"):
             for x in c["cites"]:
@@ -1343,7 +1371,6 @@ def report_preview(rp: dict) -> None:
 # Static pages (only reachable after sign-in)
 # ----------------------------------------------------------------------------
 def html_table(headers: list, rows: list, widths: list | None = None) -> str:
-    """Static HTML table in the .cmp style. Cells are trusted, hard-coded content."""
     widths = widths or [None] * len(headers)
     th = "".join(f'<th style="width:{w}">{h}</th>' if w else f"<th>{h}</th>" for h, w in zip(headers, widths))
     body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in r) + "</tr>" for r in rows)
@@ -1600,7 +1627,7 @@ if PAGE == "Workspace":
             ss_.flash = []
 
             with st.form("search_form"):
-                q = st.text_input("Search", placeholder="Search the library: client, SAP module, topic…", label_visibility="collapsed")
+                q = st.text_input("Search", placeholder="Search by DCN, client, module or topic…", label_visibility="collapsed")
                 go = st.form_submit_button("🔍 Search library", type="primary", use_container_width=True)
 
             with st.expander("🎚️ Filters"):
@@ -1653,9 +1680,13 @@ if PAGE == "Workspace":
                     ss_[key] = d["id"] in ss_.selected
                 c1, c2 = st.columns([1, 9])
                 c1.checkbox("select", key=key, on_change=toggle, args=(d["id"],), label_visibility="collapsed")
+                
+                # Badges
                 badge = '<span class="chip ok">✅ Current</span>' if d["status"] == "Current" else '<span class="chip old">⚠️ Superseded</span>'
-                body = (f'<div class="doc-title">{esc(m["doc_title"])}</div>{badge}{chip("📑 " + m["doc_type"], "p")}'
-                        f'{chip("🏢 " + m["client"])}{chip("🧩 " + m["sap_module"])}{chip("🪜 " + m["phase"])}')
+                sec_badge = f'<span class="chip" style="background:#FEE2E2; color:#991B1B">🔒 {m.get("security","Internal")}</span>' if m.get("security") == "Restricted" else ""
+                
+                body = (f'<div class="doc-title">{esc(m["doc_title"])}</div>{badge}{sec_badge}{chip("DCN: " + m.get("dcn", "-"), "p")}'
+                        f'{chip("📑 " + m["doc_type"])}{chip("🏢 " + m["client"])}{chip("🧩 " + m["sap_module"])}')
                 if it["rel"] is not None:
                     body += (f'<div class="relbar"><div style="width:{int(it["rel"])}%"></div></div><div class="small">🎯 Relevance {int(it["rel"])}%'
                              + (f' • 📍 {esc(d["unit"])} {int(it["page"])}' if it["page"] else "") + "</div>")
@@ -1669,13 +1700,13 @@ if PAGE == "Workspace":
                     files = st.file_uploader("Files", type=list(EXTRACTORS), accept_multiple_files=True,
                                              key=f"up_{ss_.up_key}", label_visibility="collapsed",
                                              help=f"Up to {MAX_UPLOAD_MB} MB per file.")
-                    restricted = st.checkbox("🔒 Restricted - visible to Admin and SAP: MPO only")
+                    sec_level = st.selectbox("Security Level", tax["security_levels"], index=0)
                     ok = st.checkbox("I confirm these files are sanitized and approved for Knowledge Lens")
                     if st.button("📤 Add to library", disabled=not (files and ok), use_container_width=True):
                         for f in files:
                             with st.spinner(f"Reading and tagging {f.name}…"):
                                 try:
-                                    ss_.flash.append(ingest(f, restricted, tax, LIB))
+                                    ss_.flash.append(ingest(f, sec_level, tax, LIB))
                                 except Exception as e:
                                     LOG.exception("ingest failed")
                                     ss_.flash.append(("error", f"{f.name}: {e}"))
@@ -1720,7 +1751,6 @@ if PAGE == "Workspace":
             for (lab, text), qc in zip(QUICK, st.columns(4)):
                 qc.button(lab, key=f"quick_{lab}", disabled=n == 0, on_click=lambda t=text: ss_.__setitem__("pending_q", t), use_container_width=True)
 
-            # pill chat box: the "N sources" label is drawn by CSS next to the send button
             st.markdown(f"<style>div[data-testid='stChatInput']::after{{content:'{n} source{'s' if n != 1 else ''}';}}</style>", unsafe_allow_html=True)
             prompt = st.chat_input("Ask a question or create something" if n else "Select sources to start chatting", disabled=n == 0,
                                    max_chars=2000) or ss_.pop("pending_q", None)
@@ -1811,9 +1841,15 @@ if PAGE == "Workspace":
                 for d in selected_docs:
                     m = d["meta"]
                     with st.expander(m["doc_title"]):
-                        st.markdown(f"🏢 **Client:** {esc(m['client'])}  \n📑 **Type:** {esc(m['doc_type'])}  \n🧩 **SAP module:** {esc(m['sap_module'])}  \n"
-                                    f"🪜 **Phase:** {esc(m['phase'])}  \n🔖 **Version:** {esc(m['version'] or '-')}  \n✍️ **Author:** {esc(d['author'])}  \n"
-                                    f"{'✅' if d['status'] == 'Current' else '⚠️'} **Status:** {esc(d['status'])}  \n👤 **Added by:** {esc(d['uploaded_by'])}")
+                        st.markdown(f"🔢 **DCN:** {esc(m.get('dcn', '-'))}  \n"
+                                    f"🏢 **Client:** {esc(m['client'])}  \n"
+                                    f"🏢 **Department:** {esc(m.get('department', '-'))}  \n"
+                                    f"🔒 **Security:** {esc(m.get('security', 'Internal'))}  \n"
+                                    f"📑 **Type:** {esc(m['doc_type'])}  \n"
+                                    f"🧩 **SAP module:** {esc(m['sap_module'])}  \n"
+                                    f"🪜 **Phase:** {esc(m['phase'])}  \n"
+                                    f"✍️ **Author:** {esc(d['author'])}  \n"
+                                    f"👤 **Added by:** {esc(d['uploaded_by'])}")
                         if m["summary"]:
                             st.caption(m["summary"])
                         nv = by_id.get(d.get("superseded_by"))
@@ -1822,6 +1858,7 @@ if PAGE == "Workspace":
                         p = Path(d.get("path") or "")
                         if d.get("path") and p.is_file() and DATA.resolve() in p.resolve().parents:  # no path traversal
                             st.download_button("⬇️ Download original", p.read_bytes(), file_name=d["name"], key=f"orig_{d['id']}")
+                        
                         bkey = f"brief_{d['id']}"
                         if st.button("📝 One-page brief", key=f"bbtn_{d['id']}", help="AI TL;DR of just this document"):
                             with st.spinner("Writing the brief…"):
@@ -1835,6 +1872,24 @@ if PAGE == "Workspace":
                             st.markdown(ss_[bkey])
                             st.download_button("⬇️ Download brief (.md)", ss_[bkey], file_name=f"{Path(d['name']).stem}_brief.md",
                                                mime="text/markdown", key=f"bdl_{d['id']}")
+
+                        # --- COMMENTS SECTION (Consultants allowed) ---
+                        st.markdown("---")
+                        st.markdown("**💬 Document Comments**")
+                        if "comments" not in m:
+                            m["comments"] = []
+                        for cm in m["comments"]:
+                            st.markdown(f"**{esc(cm['user'])}** ({cm['ts'][:10]}): {esc(cm['text'])}")
+                        
+                        with st.form(key=f"cmt_form_{d['id']}", clear_on_submit=True):
+                            new_cmt = st.text_input("Add a comment...", key=f"cmt_input_{d['id']}", label_visibility="collapsed")
+                            if st.form_submit_button("Post comment", use_container_width=True):
+                                if new_cmt.strip():
+                                    with STORE.lock:
+                                        m["comments"].append({"user": ss_.user["name"], "ts": datetime.now().isoformat(), "text": new_cmt.strip()})
+                                        STORE.save_library()
+                                    audit("comment_add", doc=d["name"])
+                                    st.rerun()
 
 
 # ---- user-management callbacks -------------------------------------------------
@@ -1937,7 +1992,6 @@ if PAGE == "Admin":
 
         t_dash, t_users, t_lib, t_vocab, t_audit = st.tabs(["📊 Dashboard", "👥 Users & roles", "📚 Library", "🏷️ Vocabulary", "🧾 Audit log"])
         with t_dash:
-            # AI Insight Banner
             st.markdown(f"""
             <div class="insight-banner">
                 <div class="icon">✨</div>
@@ -1950,7 +2004,6 @@ if PAGE == "Admin":
             </div>
             """, unsafe_allow_html=True)
 
-            # Modern KPI Cards (Forced Equal Height via Flexbox)
             kpis = [
                 ("📚", "Total Documents", len(LIB), f"{n_cur} current • {len(LIB) - n_cur} superseded", "#E0F2FE", "#0284C7"),
                 ("💬", "Questions Asked", len(asks), f"{n_users} active user(s)", "#F3E8FF", "#9333EA"),
@@ -2044,7 +2097,6 @@ if PAGE == "Admin":
                     tdf = pd.DataFrame({"question": range(1, len(asks) + 1), "seconds": [r.get("seconds", 0) for r in asks],
                                         "text": [str(r.get("question", ""))[:60] for r in asks]})
                     
-                    # Modern Altair layering to avoid the TypeError
                     base = alt.Chart(tdf).encode(
                         x=alt.X("question:O", title="Question #", axis=alt.Axis(grid=False)),
                         y=alt.Y("seconds:Q", title=None, axis=alt.Axis(grid=True, gridDash=[3,3])),
@@ -2123,28 +2175,51 @@ if PAGE == "Admin":
                     st.warning("This consultant has no modules assigned and cannot see any documents.")
 
         with t_lib:
-            st.markdown("#### Library")
+            st.markdown("#### 📚 Library Management")
             if LIB:
-                st.dataframe(pd.DataFrame([{"id": d["id"], "title": d["meta"]["doc_title"], "file": d["name"], "client": d["meta"]["client"],
-                                            "type": d["meta"]["doc_type"], "module": d["meta"]["sap_module"], "phase": d["meta"]["phase"],
-                                            "status": d["status"], "restricted": "🔒" if d.get("restricted") else "", "added by": d["uploaded_by"]}
+                # Data Table
+                st.dataframe(pd.DataFrame([{"DCN": d["meta"].get("dcn", "-"), "Title": d["meta"]["doc_title"], 
+                                            "Dept": d["meta"].get("department", "-"), "Security": d["meta"].get("security", "Internal"),
+                                            "Client": d["meta"]["client"], "Status": d["status"], "Added By": d["uploaded_by"]}
                                            for d in LIB]), use_container_width=True, hide_index=True)
-                pick = st.selectbox("Manage a document", [d["id"] for d in LIB], format_func=lambda i: by_id[i]["meta"]["doc_title"])
+                
+                st.markdown("##### ⚙️ Edit Document Metadata")
+                pick = st.selectbox("Select document", [d["id"] for d in LIB], format_func=lambda i: f"{by_id[i]['meta'].get('dcn','-')} | {by_id[i]['meta']['doc_title']}")
                 d = by_id[pick]
-                a1, a2, a3 = st.columns(3)
-                if a1.button("Mark as current", use_container_width=True):
-                    with STORE.lock:
-                        d["status"], d["superseded_by"] = "Current", None
-                        STORE.save_library()
-                    audit("status", doc=d["name"], status="Current")
-                    st.rerun()
-                if a2.button("Mark as superseded", use_container_width=True):
-                    with STORE.lock:
-                        d["status"] = "Superseded"
-                        STORE.save_library()
-                    audit("status", doc=d["name"], status="Superseded")
-                    st.rerun()
-                if a3.button("Delete document", use_container_width=True):
+                
+                # Edit Form
+                with st.form(f"edit_form_{pick}"):
+                    c1, c2 = st.columns(2)
+                    new_dcn = c1.text_input("Document Control Number (DCN)", value=d["meta"].get("dcn", ""))
+                    new_title = c2.text_input("Document Title", value=d["meta"]["doc_title"])
+                    
+                    c3, c4, c5 = st.columns(3)
+                    new_dept = c3.selectbox("Department", tax["departments"], index=tax["departments"].index(d["meta"].get("department", tax["departments"][0])) if d["meta"].get("department") in tax["departments"] else 0)
+                    new_sec = c4.selectbox("Security Level", tax["security_levels"], index=tax["security_levels"].index(d["meta"].get("security", "Internal")))
+                    new_status = c5.selectbox("Status", ["Current", "Superseded"], index=0 if d["status"] == "Current" else 1)
+
+                    c6, c7, c8 = st.columns(3)
+                    new_type = c6.selectbox("Type", tax["doc_types"], index=tax["doc_types"].index(d["meta"]["doc_type"]) if d["meta"]["doc_type"] in tax["doc_types"] else 0)
+                    new_mod = c7.selectbox("SAP Module", tax["sap_modules"], index=tax["sap_modules"].index(d["meta"]["sap_module"]) if d["meta"]["sap_module"] in tax["sap_modules"] else 0)
+                    new_client = c8.text_input("Client", value=d["meta"]["client"])
+                    
+                    if st.form_submit_button("💾 Save Metadata", type="primary"):
+                        with STORE.lock:
+                            d["meta"]["dcn"] = new_dcn.strip()
+                            d["meta"]["doc_title"] = new_title.strip()
+                            d["meta"]["department"] = new_dept
+                            d["meta"]["security"] = new_sec
+                            d["meta"]["doc_type"] = new_type
+                            d["meta"]["sap_module"] = new_mod
+                            d["meta"]["client"] = new_client.strip()
+                            d["status"] = new_status
+                            STORE.save_library()
+                        audit("edit_metadata", doc=d["name"], dcn=new_dcn)
+                        st.rerun()
+
+                # Delete / File Download
+                st.markdown("---")
+                if st.button("🗑️ Delete document", type="secondary"):
                     with STORE.lock:
                         LIB[:] = [x for x in LIB if x["id"] != pick]
                         for x in LIB:  # a deleted successor must not leave its predecessor dangling
@@ -2158,24 +2233,13 @@ if PAGE == "Admin":
                             pth.unlink(missing_ok=True)
                     audit("delete", doc=d["name"])
                     st.rerun()
-                v1, v2 = st.columns(2)
-                restr = v1.checkbox("🔒 Restricted (Admin and SAP: MPO only)", value=d.get("restricted", False), key=f"restr_{pick}")
-                mods = tax["sap_modules"]
-                cur_mod = d["meta"]["sap_module"]
-                mod = v2.selectbox("🧩 SAP module (controls consultant access)", mods, index=mods.index(cur_mod) if cur_mod in mods else 0, key=f"mod_{pick}")
-                if st.button("💾 Save visibility"):
-                    with STORE.lock:
-                        d["restricted"], d["meta"]["sap_module"] = restr, mod
-                        STORE.save_library()
-                    audit("visibility", doc=d["name"], restricted=restr, module=mod)
-                    st.rerun()
             else:
                 st.info("The library is empty.")
 
         with t_vocab:
             st.markdown("#### Controlled vocabulary")
-            st.caption("Client aliases map variants (TML, Tata Motors Ltd) to one record. The glossary expands TMC terms in searches.")
-            txt = st.text_area("taxonomy.json", json.dumps(tax, indent=2, ensure_ascii=False), height=300)
+            st.caption("Manage lists for clients, SAP modules, departments, security levels, etc.")
+            txt = st.text_area("taxonomy.json", json.dumps(tax, indent=2, ensure_ascii=False), height=400)
             if st.button("Save vocabulary"):
                 try:
                     t = json.loads(txt)
