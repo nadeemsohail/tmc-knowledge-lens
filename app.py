@@ -200,7 +200,13 @@ button[data-testid="baseButton-header"] { color: #ffffff !important; }
 .cmp td { padding:10px 14px; border-top:1px solid #E8EAF0; vertical-align:top; color:#3B4252; }
 .cmp td:first-child { font-weight:600; color:#0A4F34; }
 
-/* --- MODERN DASHBOARD KPI CARDS --- */
+/* --- MODERN DASHBOARD KPI CARDS (FIXED HEIGHT) --- */
+.kpi-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 24px;
+    align-items: stretch; /* Forces all cards to be the same height */
+}
 .kpi-modern {
     background: #ffffff;
     border: 1px solid #E5E7EB;
@@ -210,7 +216,8 @@ button[data-testid="baseButton-header"] { color: #ffffff !important; }
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    min-height: 120px;
+    flex: 1; /* Takes up equal width */
+    height: 100%;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 .kpi-modern:hover {
@@ -236,7 +243,7 @@ button[data-testid="baseButton-header"] { color: #ffffff !important; }
     font-weight: 800;
     color: #111827;
     line-height: 1;
-    margin-top: 12px;
+    margin-top: 16px;
 }
 .kpi-label {
     font-size: 0.9rem;
@@ -245,9 +252,10 @@ button[data-testid="baseButton-header"] { color: #ffffff !important; }
     margin-top: 4px;
 }
 .kpi-sub {
-    font-size: 0.8rem;
+    font-size: 0.75rem; /* Slightly smaller to prevent wrapping */
     color: #6B7280;
     margin-top: 6px;
+    line-height: 1.3;
 }
 .insight-banner {
     background: linear-gradient(135deg, #F0FDF4 0%, #DCFCE7 100%);
@@ -1942,7 +1950,7 @@ if PAGE == "Admin":
             </div>
             """, unsafe_allow_html=True)
 
-            # Modern KPI Cards
+            # Modern KPI Cards (Forced Equal Height via Flexbox)
             kpis = [
                 ("📚", "Total Documents", len(LIB), f"{n_cur} current • {len(LIB) - n_cur} superseded", "#E0F2FE", "#0284C7"),
                 ("💬", "Questions Asked", len(asks), f"{n_users} active user(s)", "#F3E8FF", "#9333EA"),
@@ -1952,9 +1960,9 @@ if PAGE == "Admin":
                 ("📝", "Reports Generated", n_rep, "Word • PPT • Excel • PDF", "#FEE2E2", "#DC2626")
             ]
             
-            cols = st.columns(6)
-            for c, (ic, lab, val, sub, bg_col, ic_col) in zip(cols, kpis):
-                c.markdown(f"""
+            st.markdown('<div class="kpi-row">', unsafe_allow_html=True)
+            for ic, lab, val, sub, bg_col, ic_col in kpis:
+                st.markdown(f"""
                 <div class="kpi-modern">
                     <div class="kpi-header">
                         <div class="kpi-icon" style="background:{bg_col}; color:{ic_col};">{ic}</div>
@@ -1966,9 +1974,8 @@ if PAGE == "Admin":
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
-            st.write("")
-            
             def donut(rows, colors_, title):
                 st.markdown(f'<div class="chart-title" style="font-size:1.1rem; margin-top:10px;">{title}</div>', unsafe_allow_html=True)
                 df_ = pd.DataFrame(rows, columns=["label", "count"])
@@ -2036,14 +2043,27 @@ if PAGE == "Admin":
                 if asks:
                     tdf = pd.DataFrame({"question": range(1, len(asks) + 1), "seconds": [r.get("seconds", 0) for r in asks],
                                         "text": [str(r.get("question", ""))[:60] for r in asks]})
-                    ch = alt.Chart(tdf).mark_area(line={"color": "#8B5CF6", "strokeWidth": 2}, color=alt.Gradient(
-                        gradient="linear", stops=[alt.GradientStop(color="#DDD6FE", offset=0), alt.GradientStop(color="#F5F3FF", offset=1)],
-                        x1=1, x2=1, y1=1, y2=0)).encode(
-                        x=alt.X("question:O", title="Question #", axis=alt.Axis(grid=False)), 
-                        y=alt.Y("seconds:Q", title=None, axis=alt.Axis(grid=True, gridDash=[3,3])), 
+                    
+                    # Modern Altair layering to avoid the TypeError
+                    base = alt.Chart(tdf).encode(
+                        x=alt.X("question:O", title="Question #", axis=alt.Axis(grid=False)),
+                        y=alt.Y("seconds:Q", title=None, axis=alt.Axis(grid=True, gridDash=[3,3])),
                         tooltip=["question", "seconds", "text"]
-                    ).properties(height=260).configure_view(strokeWidth=0).configure_axis(domain=False)
-                    st.altair_chart(ch + ch.mark_point(color="#8B5CF6", filled=True, size=60), use_container_width=True)
+                    )
+                    
+                    area = base.mark_area(
+                        line={"color": "#8B5CF6", "strokeWidth": 2}, 
+                        color=alt.Gradient(
+                            gradient="linear", 
+                            stops=[alt.GradientStop(color="#DDD6FE", offset=0), alt.GradientStop(color="#F5F3FF", offset=1)],
+                            x1=1, x2=1, y1=1, y2=0
+                        )
+                    )
+                    
+                    points = base.mark_point(color="#8B5CF6", filled=True, size=60)
+                    
+                    ch = alt.layer(area, points).properties(height=260).configure_view(strokeWidth=0).configure_axis(domain=False)
+                    st.altair_chart(ch, use_container_width=True)
                 else:
                     st.caption("Ask a question in the Workspace to see timings.")
 
