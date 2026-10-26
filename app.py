@@ -200,7 +200,71 @@ button[data-testid="baseButton-header"] { color: #ffffff !important; }
 .cmp td { padding:10px 14px; border-top:1px solid #E8EAF0; vertical-align:top; color:#3B4252; }
 .cmp td:first-child { font-weight:600; color:#0A4F34; }
 
-/* ---- Pill chat box: "Ask a question or create something  •  N sources  •  (send)" ---- */
+/* --- MODERN DASHBOARD KPI CARDS --- */
+.kpi-modern {
+    background: #ffffff;
+    border: 1px solid #E5E7EB;
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 120px;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.kpi-modern:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+.kpi-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+.kpi-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+}
+.kpi-value {
+    font-size: 2.25rem;
+    font-weight: 800;
+    color: #111827;
+    line-height: 1;
+    margin-top: 12px;
+}
+.kpi-label {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #4B5563;
+    margin-top: 4px;
+}
+.kpi-sub {
+    font-size: 0.8rem;
+    color: #6B7280;
+    margin-top: 6px;
+}
+.insight-banner {
+    background: linear-gradient(135deg, #F0FDF4 0%, #DCFCE7 100%);
+    border: 1px solid #BBF7D0;
+    border-left: 6px solid #16A34A;
+    border-radius: 12px;
+    padding: 16px 24px;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+.insight-banner .icon { font-size: 1.8rem; }
+.insight-banner h4 { margin: 0 0 4px 0; color: #166534; font-size: 1rem; }
+.insight-banner p { margin: 0; color: #14532D; font-size: 0.95rem; }
+
+/* ---- Pill chat box ---- */
 div[data-testid="stChatInput"] { position:relative; background:transparent !important; }
 div[data-testid="stChatInput"] > div { background:#FFFFFF !important; border:1px solid #E6E8EE !important; border-radius:999px !important;
     box-shadow:0 6px 20px rgba(15,23,42,.08); min-height:58px; padding:6px 8px 6px 22px !important; align-items:center; transition:box-shadow .15s, border-color .15s; }
@@ -1865,59 +1929,88 @@ if PAGE == "Admin":
 
         t_dash, t_users, t_lib, t_vocab, t_audit = st.tabs(["📊 Dashboard", "👥 Users & roles", "📚 Library", "🏷️ Vocabulary", "🧾 Audit log"])
         with t_dash:
-            st.markdown("#### 📊 Pilot dashboard")
-            kpis = [("📚", "Documents", len(LIB), f"{n_cur} current • {len(LIB) - n_cur} superseded", "#0F6B45", "#1FA67A"),
-                    ("💬", "Questions asked", len(asks), f"{n_users} active user(s)", "#2563EB", "#3B82F6"),
-                    ("🔍", "Searches", n_search, "library searches run", "#7C3AED", "#A78BFA"),
-                    ("⏱️", "Avg. answer time", avg_t, f"manual baseline ≈ {BASELINE_MIN:g} min", "#D97706", "#F2A93B"),
-                    ("👍", "Helpful answers", helpful, f"{len(fb)} rating(s) given", "#059669", "#34D399"),
-                    ("📝", "Reports generated", n_rep, "Word • PPT • Excel • PDF", "#DC2626", "#F97316")]
-            for c, (ic, lab, val, sub, c1, c2) in zip(st.columns(6), kpis):
-                c.markdown(f'<div class="kpi" style="background:linear-gradient(135deg,{c1},{c2})"><div class="ic">{ic}</div>'
-                           f'<div class="v">{esc(val)}</div><div class="l">{esc(lab)}</div><div class="s">{esc(sub)}</div></div>', unsafe_allow_html=True)
-            saved_hrs = sum(max(BASELINE_MIN - r.get("seconds", 0) / 60, 0) for r in asks) / 60
-            st.markdown(f'<div class="glance" style="margin-top:12px"><h4>⏳ Estimated time saved</h4>'
-                        f'<span style="font-size:2.2rem;font-weight:800;color:#0F6B45">{saved_hrs:.1f} hours</span> '
-                        f'<span class="small">= {len(asks)} answered question(s) × (manual baseline of {BASELINE_MIN:g} min − actual answer time). '
-                        f'An estimate: replace the baseline with your measured November figure via MANUAL_BASELINE_MIN.</span></div>',
-                        unsafe_allow_html=True)
+            # AI Insight Banner
+            st.markdown(f"""
+            <div class="insight-banner">
+                <div class="icon">✨</div>
+                <div>
+                    <h4>Knowledge Lens AI Insights</h4>
+                    <p>The library currently holds <b>{len(LIB)}</b> documents ({n_cur} active). You have asked <b>{len(asks)}</b> questions 
+                    and run <b>{n_search}</b> searches. Based on manual baselines, the system has saved your team an estimated 
+                    <b>{sum(max(BASELINE_MIN - r.get('seconds', 0) / 60, 0) for r in asks) / 60:.1f} hours</b> so far.</p>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
+            # Modern KPI Cards
+            kpis = [
+                ("📚", "Total Documents", len(LIB), f"{n_cur} current • {len(LIB) - n_cur} superseded", "#E0F2FE", "#0284C7"),
+                ("💬", "Questions Asked", len(asks), f"{n_users} active user(s)", "#F3E8FF", "#9333EA"),
+                ("🔍", "Searches", n_search, "library searches run", "#FCE7F3", "#DB2777"),
+                ("⏱️", "Avg. Answer Time", avg_t, f"manual baseline ≈ {BASELINE_MIN:g} min", "#FEF3C7", "#D97706"),
+                ("👍", "Helpful Answers", helpful, f"{len(fb)} rating(s) given", "#DCFCE7", "#16A34A"),
+                ("📝", "Reports Generated", n_rep, "Word • PPT • Excel • PDF", "#FEE2E2", "#DC2626")
+            ]
+            
+            cols = st.columns(6)
+            for c, (ic, lab, val, sub, bg_col, ic_col) in zip(cols, kpis):
+                c.markdown(f"""
+                <div class="kpi-modern">
+                    <div class="kpi-header">
+                        <div class="kpi-icon" style="background:{bg_col}; color:{ic_col};">{ic}</div>
+                    </div>
+                    <div>
+                        <div class="kpi-value">{esc(val)}</div>
+                        <div class="kpi-label">{esc(lab)}</div>
+                        <div class="kpi-sub">{esc(sub)}</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+            st.write("")
+            
             def donut(rows, colors_, title):
-                st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="chart-title" style="font-size:1.1rem; margin-top:10px;">{title}</div>', unsafe_allow_html=True)
                 df_ = pd.DataFrame(rows, columns=["label", "count"])
                 df_ = df_[df_["count"] > 0]
                 if df_.empty:
                     st.caption("No data yet.")
                     return
-                ch = alt.Chart(df_).mark_arc(innerRadius=55, outerRadius=100).encode(
-                    theta="count:Q", color=alt.Color("label:N", scale=alt.Scale(domain=list(df_["label"]), range=colors_[:len(df_)]),
-                                                     legend=alt.Legend(orient="bottom", title=None)),
-                    tooltip=["label", "count"]).properties(height=260)
+                ch = alt.Chart(df_).mark_arc(innerRadius=60, outerRadius=90, stroke="#fff", strokeWidth=2).encode(
+                    theta="count:Q", 
+                    color=alt.Color("label:N", scale=alt.Scale(domain=list(df_["label"]), range=colors_[:len(df_)]),
+                                    legend=alt.Legend(orient="bottom", title=None, columns=2)),
+                    tooltip=["label", "count"]
+                ).properties(height=260).configure_view(strokeOpacity=0)
                 st.altair_chart(ch, use_container_width=True)
 
             def hbar(counter, title, color):
-                st.markdown(f'<div class="chart-title">{title}</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="chart-title" style="font-size:1.1rem; margin-top:10px;">{title}</div>', unsafe_allow_html=True)
                 if not counter:
                     st.caption("No data yet.")
                     return
                 df_ = pd.DataFrame(counter.most_common(8), columns=["label", "count"])
-                ch = alt.Chart(df_).mark_bar(cornerRadiusEnd=5, color=color).encode(
-                    x=alt.X("count:Q", title=None, axis=alt.Axis(tickMinStep=1)), y=alt.Y("label:N", sort="-x", title=None),
-                    tooltip=["label", "count"]).properties(height=260)
+                ch = alt.Chart(df_).mark_bar(cornerRadiusEnd=6, color=color, height=20).encode(
+                    x=alt.X("count:Q", title=None, axis=alt.Axis(tickMinStep=1, grid=False)),
+                    y=alt.Y("label:N", sort="-x", title=None, axis=alt.Axis(labelLimit=200)),
+                    tooltip=["label", "count"]
+                ).properties(height=260).configure_view(strokeWidth=0).configure_axis(domain=False)
                 st.altair_chart(ch, use_container_width=True)
 
             r1a, r1b = st.columns([3, 2])
             with r1a:
-                st.markdown('<div class="chart-title">📈 Activity over time</div>', unsafe_allow_html=True)
+                st.markdown('<div class="chart-title" style="font-size:1.1rem; margin-top:10px;">📈 Activity over time</div>', unsafe_allow_html=True)
                 ACTS = ["search", "ask", "summary", "report", "upload"]
                 act = ldf[ldf["action"].isin(ACTS)].copy() if len(ldf) else ldf
                 if len(act):
                     act["day"] = pd.to_datetime(act["ts"]).dt.floor("D")
                     grp = act.groupby(["day", "action"]).size().reset_index(name="count")
                     ch = alt.Chart(grp).mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
-                        x=alt.X("day:T", title=None, axis=alt.Axis(format="%d %b")), y=alt.Y("count:Q", title=None, axis=alt.Axis(tickMinStep=1)),
+                        x=alt.X("day:T", title=None, axis=alt.Axis(format="%d %b", grid=False)), 
+                        y=alt.Y("count:Q", title=None, axis=alt.Axis(tickMinStep=1, grid=True, gridDash=[3,3])),
                         color=alt.Color("action:N", scale=alt.Scale(domain=ACTS, range=PAL[:5]), legend=alt.Legend(orient="bottom", title=None)),
-                        tooltip=["day:T", "action", "count"]).properties(height=260)
+                        tooltip=["day:T", "action", "count"]
+                    ).properties(height=260).configure_view(strokeWidth=0).configure_axis(domain=False)
                     st.altair_chart(ch, use_container_width=True)
                 else:
                     st.caption("No activity yet.")
@@ -1925,29 +2018,32 @@ if PAGE == "Admin":
                 up = sum(r.get("rating") == 1 for r in fb)
                 down = sum(r.get("rating") == -1 for r in fb)
                 donut([("👍 Helpful", up), ("👎 Not helpful", down), ("Not rated", max(len(asks) - len(fb), 0))],
-                      ["#1FA67A", "#E8590C", "#C8CDD6"], "🎯 Answer feedback")
+                      ["#16A34A", "#DC2626", "#E5E7EB"], "🎯 Answer feedback")
 
             r2a, r2b, r2c = st.columns(3)
             with r2a:
-                hbar(Counter(d["meta"]["doc_type"] for d in LIB), "📑 Documents by type", PAL[0])
+                hbar(Counter(d["meta"]["doc_type"] for d in LIB), "📑 Documents by type", "#0F6B45")
             with r2b:
-                hbar(Counter(d["meta"]["client"] for d in LIB), "🏢 Documents by client", PAL[3])
+                hbar(Counter(d["meta"]["client"] for d in LIB), "🏢 Documents by client", "#3B82F6")
             with r2c:
                 donut(list(Counter(d["meta"]["sap_module"] for d in LIB).items()), PAL, "🧩 Documents by SAP module")
 
             r3a, r3b = st.columns([2, 3])
             with r3a:
-                hbar(Counter(str(r.get("query", "")).lower() for r in log if r["action"] == "search"), "🔎 Top search terms", PAL[2])
+                hbar(Counter(str(r.get("query", "")).lower() for r in log if r["action"] == "search"), "🔎 Top search terms", "#F59E0B")
             with r3b:
-                st.markdown('<div class="chart-title">⏱️ Answer time per question (seconds)</div>', unsafe_allow_html=True)
+                st.markdown('<div class="chart-title" style="font-size:1.1rem; margin-top:10px;">⏱️ Answer time per question (seconds)</div>', unsafe_allow_html=True)
                 if asks:
                     tdf = pd.DataFrame({"question": range(1, len(asks) + 1), "seconds": [r.get("seconds", 0) for r in asks],
                                         "text": [str(r.get("question", ""))[:60] for r in asks]})
-                    ch = alt.Chart(tdf).mark_area(line={"color": PAL[4]}, color=alt.Gradient(
-                        gradient="linear", stops=[alt.GradientStop(color="#F9C9A8", offset=0), alt.GradientStop(color="#FFF3EA", offset=1)],
+                    ch = alt.Chart(tdf).mark_area(line={"color": "#8B5CF6", "strokeWidth": 2}, color=alt.Gradient(
+                        gradient="linear", stops=[alt.GradientStop(color="#DDD6FE", offset=0), alt.GradientStop(color="#F5F3FF", offset=1)],
                         x1=1, x2=1, y1=1, y2=0)).encode(
-                        x=alt.X("question:O", title="Question #"), y=alt.Y("seconds:Q", title=None), tooltip=["question", "seconds", "text"]).properties(height=260)
-                    st.altair_chart(ch + ch.mark_point(color=PAL[4], filled=True, size=70), use_container_width=True)
+                        x=alt.X("question:O", title="Question #", axis=alt.Axis(grid=False)), 
+                        y=alt.Y("seconds:Q", title=None, axis=alt.Axis(grid=True, gridDash=[3,3])), 
+                        tooltip=["question", "seconds", "text"]
+                    ).properties(height=260).configure_view(strokeWidth=0).configure_axis(domain=False)
+                    st.altair_chart(ch + ch.mark_point(color="#8B5CF6", filled=True, size=60), use_container_width=True)
                 else:
                     st.caption("Ask a question in the Workspace to see timings.")
 
