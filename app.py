@@ -1643,15 +1643,18 @@ def render_turn_extras(i: int, c: dict) -> None:
             for x in c["cites"]:
                 st.markdown(f"**[S{x['n']}] {x['title']}** - {x['loc']}")
                 st.caption(x["snippet"])
-    b0, b1, b2, _ = st.columns([2.4, 1.2, 1.2, 5])
-    if c.get("ok", True):
-        with b0.popover("📋 Copy"):
-            st.code(c["a"], language=None)
-    if c["rating"] is None:
-        b1.button("👍 Helpful", key=f"fb_up_{c['uid']}", on_click=rate, args=(i, 1), use_container_width=True)
-        b2.button("👎 Not helpful", key=f"fb_dn_{c['uid']}", on_click=rate, args=(i, -1), use_container_width=True)
-    elif c["rating"] != 0:
-        b1.caption("Thanks for the feedback!")
+    
+    # Feedback buttons using SVG icons for a clean look
+    if c.get("ok", True) and c["rating"] is None:
+        b1, b2, _ = st.columns([1, 1, 8])
+        if b1.button("👍", key=f"fb_up_{c['uid']}", on_click=rate, args=(i, 1)):
+            pass
+        if b2.button("👎", key=f"fb_dn_{c['uid']}", on_click=rate, args=(i, -1)):
+            pass
+    elif c["rating"] == 1:
+        st.markdown("<div style='color:#10B981; font-size:0.8rem; text-align:right; padding-right:10px;'>👍</div>", unsafe_allow_html=True)
+    elif c["rating"] == -1:
+        st.markdown("<div style='color:#EF4444; font-size:0.8rem; text-align:right; padding-right:10px;'>👎</div>", unsafe_allow_html=True)
 
 
 def add_comment(doc: dict, text: str) -> None:
