@@ -540,9 +540,10 @@ def make_snippet(text: str, qtokens: list[str], width: int = 240) -> str:
     return ("…" if start else "") + flat[start:start + width] + "…"
 
 
-def meta_blob(m: dict, name: str) -> str:
+def meta_blob(m: dict, name: str, author: str = "") -> str:
     keys = ("dcn", "doc_title", "client", "department", "industry", "sap_module", "phase", "doc_type", "summary")
-    return " ".join(str(m.get(k, "")) for k in keys) + " " + name
+    extra = " ".join(f"{k} {v}" for k, v in (m.get("custom") or {}).items())
+    return " ".join(str(m.get(k, "")) for k in keys) + f" {name} {author} {extra}"
 
 
 def scope(u: dict, flt: dict | None = None, alias: str = "d") -> tuple[str, list]:
@@ -720,9 +721,9 @@ def next_dcn(org_id: str) -> str:
     return f"{prefix}{((r['m'] if r and r['m'] else 0) + 1):04d}"
 
 
-def insert_chunks(doc_id: str, meta: dict, name: str, pages: list[str]) -> None:
+def insert_chunks(doc_id: str, meta: dict, name: str, pages: list[str], author: str = "") -> None:
     c = conn()
-    c.execute("INSERT INTO chunks(doc_id,page,text) VALUES(?,0,?)", (doc_id, meta_blob(meta, name)))
+    c.execute("INSERT INTO chunks(doc_id,page,text) VALUES(?,0,?)", (doc_id, meta_blob(meta, name, author)))
     c.executemany("INSERT INTO chunks(doc_id,page,text) VALUES(?,?,?)", [(doc_id, i + 1, p) for i, p in enumerate(pages) if p.strip()])
 
 
@@ -778,7 +779,7 @@ def ingest(file, sec_level: str, tax: dict):
             run("INSERT INTO docs(id,org_id,dcn,name,ext,unit,author,hash,uploaded_by,uploaded_at,status,superseded_by,path,meta) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", doc_id, u["org_id"], meta["dcn"], safe, ext, unit, clean(author)[:120], digest,
                 u["name"], now(), status, sup, str(path), json.dumps(meta, ensure_ascii=False))
-            insert_chunks(doc_id, meta, safe, pages)
+            insert_chunks(doc_id, meta, safe, pages, clean(author)[:120])
     except BaseException:
         path.unlink(missing_ok=True)
         raise
@@ -786,14 +787,52 @@ def ingest(file, sec_level: str, tax: dict):
     return "success", f"Added “{meta['doc_title']}” ({meta['dcn']}).{note}"
 
 
+COLUMN_FIELDS = ("author", "name", "uploaded_by", "uploaded_at")  # stored in table columns, not in the meta JSON
+MAX_CUSTOM = 20
+
+
+def field_label(f: str) -> str:
+    return f"{f[7:]} (custom)" if f.startswith("custom:") else FIELD_LABELS.get(f, f)
+
+
+def get_field(d: dict, f: str) -> str:
+    if f == "status":
+        return d["status"]
+    if f in COLUMN_FIELDS:
+        return str(d.get(f) or "")
+    if f.startswith("custom:"):
+        return str((d["meta"].get("custom") or {}).get(f[7:], ""))
+    return str(d["meta"].get(f, ""))
+
+
+def set_field(d: dict, f: str, v: str) -> None:
+    if f == "status":
+        d["status"] = v
+    elif f in COLUMN_FIELDS:
+        d[f] = v
+    elif f.startswith("custom:"):
+        c = d["meta"].setdefault("custom", {})
+        if v:
+            c[f[7:]] = v
+        else:
+            c.pop(f[7:], None)
+            if not c:
+                d["meta"].pop("custom", None)
+    else:
+        d["meta"][f] = v
+
+
 def _update_meta_nt(d: dict, fields: dict, status: str) -> None:
-    """Write metadata fields + status for one document and refresh its search chunk. Caller owns the transaction."""
-    d["meta"].update(fields)
+    """Write any mix of meta / column / custom fields + status for one document and refresh its search chunk. Caller owns the transaction."""
+    for f, v in fields.items():
+        set_field(d, f, v)
+    d["status"] = status
     sup = None if status == "Current" else d.get("superseded_by")
-    run("UPDATE docs SET meta=?, dcn=?, status=?, superseded_by=? WHERE id=?",
-        json.dumps(d["meta"], ensure_ascii=False), d["meta"].get("dcn"), status, sup, d["id"])
+    run("UPDATE docs SET meta=?, dcn=?, status=?, superseded_by=?, author=?, name=?, uploaded_by=?, uploaded_at=? WHERE id=?",
+        json.dumps(d["meta"], ensure_ascii=False), d["meta"].get("dcn"), status, sup, d.get("author"), d.get("name"),
+        d.get("uploaded_by"), d.get("uploaded_at"), d["id"])
     run("DELETE FROM chunks WHERE doc_id=? AND page=0", d["id"])
-    run("INSERT INTO chunks(doc_id,page,text) VALUES(?,0,?)", d["id"], meta_blob(d["meta"], d["name"]))
+    run("INSERT INTO chunks(doc_id,page,text) VALUES(?,0,?)", d["id"], meta_blob(d["meta"], d["name"], d.get("author") or ""))
 
 
 def trash_doc(doc_id: str, org_id: str) -> None:
@@ -1123,7 +1162,7 @@ def migrate_legacy() -> None:
                 run("INSERT OR IGNORE INTO docs(id,org_id,dcn,name,ext,unit,author,hash,uploaded_by,uploaded_at,status,superseded_by,path,meta) "
                     "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", d["id"], org_id, m.get("dcn"), d["name"], d["ext"], d["unit"], d["author"], d["hash"],
                     d["uploaded_by"], d["uploaded_at"], d["status"], d.get("superseded_by"), d.get("path", ""), json.dumps(m, ensure_ascii=False))
-                insert_chunks(d["id"], m, d["name"], d["pages"])
+                insert_chunks(d["id"], m, d["name"], d["pages"], d.get("author", ""))
                 for c in comments:
                     run("INSERT INTO comments(doc_id,org_id,user,ts,text) VALUES(?,?,?,?,?)", d["id"], org_id, c["user"], c["ts"], c["text"])
         LOG.info("legacy data imported: %d users, %d documents", len(users), len(lib))
@@ -1776,7 +1815,8 @@ if PAGE == "Workspace":
                 with st.expander(m["doc_title"]):
                     st.markdown(f"🔢 **DCN:** {esc(m.get('dcn', '-'))}  \n🏢 **Client:** {esc(m['client'])}  \n🏬 **Department:** {esc(m.get('department', '-'))}  \n"
                                 f"🔒 **Security:** {esc(m.get('security', 'Internal'))}  \n📑 **Type:** {esc(m['doc_type'])}  \n🧩 **SAP module:** {esc(m['sap_module'])}  \n"
-                                f"🪜 **Phase:** {esc(m['phase'])}  \n✍️ **Author:** {esc(d['author'])}  \n👤 **Added by:** {esc(d['uploaded_by'])}")
+                                f"🪜 **Phase:** {esc(m['phase'])}  \n✍️ **Author:** {esc(d['author'])}  \n👤 **Added by:** {esc(d['uploaded_by'])}"
+                                    + "".join(f"  \n🔖 **{esc(k)}:** {esc(v)}" for k, v in (m.get("custom") or {}).items()))
                     if m.get("summary"):
                         st.caption(m["summary"])
                     nv = next(iter(get_docs(U, [d["superseded_by"]])), None) if d["superseded_by"] else None
@@ -1903,7 +1943,7 @@ def cb_delete_user(sel):
 def export_org_zip() -> bytes:
     """Tenant data export (GDPR-style portability): metadata, comments, users (no secrets), audit."""
     oid = U["org_id"]
-    docs = [{**{k: r[k] for k in ("id", "dcn", "name", "status", "uploaded_by", "uploaded_at", "deleted_at")}, "meta": json.loads(r["meta"])}
+    docs = [{**{k: r[k] for k in ("id", "dcn", "name", "author", "status", "uploaded_by", "uploaded_at", "deleted_at")}, "meta": json.loads(r["meta"])}
             for r in q("SELECT * FROM docs WHERE org_id=?", oid)]
     users = [{k: r[k] for k in ("username", "name", "email", "role", "modules", "active", "last_login", "created_at")} for r in q("SELECT * FROM users WHERE org_id=?", oid)]
     buf = io.BytesIO()
@@ -1930,10 +1970,15 @@ def csv_safe(v) -> str:
 ASSIST_ROLES = (ROLE_ADMIN, ROLE_MPO)
 FIELD_LABELS = {"doc_title": "Title", "dcn": "DCN", "department": "Department", "security": "Security", "status": "Status",
                 "doc_type": "Type", "sap_module": "SAP module", "phase": "Phase", "industry": "Industry", "client": "Client",
-                "version": "Version", "summary": "Summary"}
+                "version": "Version", "summary": "Summary", "author": "Author", "name": "File name", "uploaded_by": "Added by",
+                "uploaded_at": "Date added"}
+ALIASES = {"title": "doc_title", "document_title": "doc_title", "type": "doc_type", "module": "sap_module", "sap": "sap_module",
+           "file_name": "name", "filename": "name", "file": "name", "added_by": "uploaded_by", "uploaded": "uploaded_by", "date": "uploaded_at",
+           "date_added": "uploaded_at", "created": "uploaded_at", "writer": "author", "authors": "author", "document_control_number": "dcn"}
+CUSTOM_RE = re.compile(r"custom:\s*([A-Za-z][A-Za-z0-9 _-]{0,39})", re.I)
 ENUM_SOURCES = {"department": "departments", "security": "security_levels", "doc_type": "doc_types", "sap_module": "sap_modules",
                 "phase": "phases", "industry": "industries"}
-HIGH_RISK = {"security", "status", "dcn"}  # always wait for the user's OK
+HIGH_RISK = {"security", "status", "dcn", "uploaded_by", "uploaded_at"}  # sensitive/provenance fields always wait for the user's OK
 BULK_AUTO_LIMIT = 5                        # more documents than this also waits for OK
 FILTER_FIELDS = ("client", "doc_type", "sap_module", "phase", "department", "security", "industry")
 STATUS_BADGE = {"pending": "⏳ Needs your OK", "applied": "✅ Applied", "undone": "↩️ Undone", "cancelled": "✖️ Cancelled", "error": "⚠️ Not applied"}
@@ -1949,7 +1994,9 @@ ASSIST_SYSTEM = """You are the Metadata Assistant of a document library. Turn th
             "search": ""},
  "changes": {}}
 Rules:
-- "update": the user gives new values. "changes" maps field names to new values. Editable fields: doc_title, dcn, department, security, status, doc_type, sap_module, phase, industry, client, version, summary.
+- "update": the user gives new values. "changes" maps field names to new values. Editable fields: doc_title, dcn, department, security, status, doc_type, sap_module, phase, industry, client, version, summary, author, name (file name), uploaded_by (added by), uploaded_at (date added, write it as YYYY-MM-DD).
+- Any OTHER attribute the user wants to record (project manager, language, tags, contract number...) is a custom field: use the key "custom:<Field name>", e.g. {"custom:Project Manager": "Ali Khan"}. Reuse existing custom field names when they match. An empty value removes a custom field.
+- "Add the author" / "set the author" / "author: X" all mean changing the field author. Never ask which field when the user already named it.
 - "retag": the user wants you to re-read the documents and suggest better metadata.
 - "show": the user wants to list or find documents.
 - "this", "these", "selected" mean use_selected=true. "it", "them", "those", "that" with nothing ticked mean use_previous=true.
@@ -1960,7 +2007,8 @@ Rules:
 Allowed values:
 ALLOWED_VALUES"""
 
-HELP_TEXT = ("I can **change metadata** (title, DCN, department, security level, status, type, SAP module, phase, industry, client, version, summary), "
+HELP_TEXT = ("I can **change any metadata field** (title, DCN, author, file name, added by, date added, department, security level, status, type, SAP module, phase, industry, client, version, summary, "
+             "or any **custom field** you invent), "
              "**re-tag documents from their content**, and **list documents**. Name documents by DCN, tick them in the Workspace, "
              "or describe them (e.g. “all Tata Motors blueprints”).")
 
@@ -1969,11 +2017,18 @@ def new_msg(text: str, role: str = "assistant", **kw) -> dict:
     return {"uid": uuid.uuid4().hex, "role": role, "text": text, "proposal": None, "status": None, "undo": None, "table": None, **kw}
 
 
+def custom_keys() -> list[str]:
+    rows = q("SELECT DISTINCT j.key AS k FROM docs d, json_each(COALESCE(json_extract(d.meta,'$.custom'),'{}')) j "
+             "WHERE d.org_id=? AND d.deleted_at IS NULL LIMIT 30", U["org_id"])
+    return [r["k"] for r in rows]
+
+
 def assist_context() -> str:
     def fmt(ds):
         return "; ".join(f"{d['meta'].get('dcn', '-')} {d['meta']['doc_title'][:60]}" for d in ds[:10]) or "none"
     return (f"Ticked documents: {fmt(get_docs(U, list(ss_.selected)))} (total {len(ss_.selected)})\n"
-            f"Previous targets: {fmt(get_docs(U, ss_.ma_prev))}")
+            f"Previous targets: {fmt(get_docs(U, ss_.ma_prev))}\n"
+            f"Existing custom fields: {', '.join(custom_keys()) or 'none'}")
 
 
 def filter_docs(f: dict, limit: int = 200) -> list[dict]:
@@ -2033,19 +2088,25 @@ def validate_changes(raw, n_targets: int):
     ok, errs = {}, []
     if not isinstance(raw, dict):
         return ok, errs
-    for f, v in raw.items():
-        if f not in FIELD_LABELS:
-            errs.append(f"“{f}” cannot be changed here.")
+    for f0, v in raw.items():
+        f = str(f0).strip()
+        f = ALIASES.get(f.lower().replace(" ", "_"), f)
+        cm = CUSTOM_RE.fullmatch(f)
+        if cm:
+            f = "custom:" + cm.group(1).strip()
+        elif f not in FIELD_LABELS:
+            errs.append(f"“{f0}” is not a standard field. To record it, call it a custom field (e.g. “custom:{f0}”).")
             continue
         v = clean(v).strip()
-        if not v and f not in ("summary", "version"):
-            errs.append(f"{FIELD_LABELS[f]} cannot be empty.")
+        optional = f in ("summary", "version", "author") or f.startswith("custom:")
+        if not v and not optional:
+            errs.append(f"{field_label(f)} cannot be empty.")
             continue
         if f in ENUM_SOURCES or f == "status":
             opts = tax[ENUM_SOURCES[f]] if f in ENUM_SOURCES else ["Current", "Superseded"]
             m = next((o for o in opts if o.lower() == v.lower()), None)
             if not m:
-                errs.append(f"“{v}” is not a valid {FIELD_LABELS[f]}. Options: {', '.join(opts)}.")
+                errs.append(f"“{v}” is not a valid {field_label(f)}. Options: {', '.join(opts)}.")
                 continue
             v = m
         elif f == "dcn":
@@ -2058,6 +2119,18 @@ def validate_changes(raw, n_targets: int):
                 continue
         elif f == "client":
             v = canon_client(v, tax)[:120]
+        elif f == "uploaded_at":
+            try:
+                v = datetime.fromisoformat(v).isoformat(timespec="seconds")
+            except ValueError:
+                errs.append("Date added must look like 2026-03-15.")
+                continue
+        elif f == "name":
+            v = re.sub(r"[\\/]", "_", v)[:150]
+        elif f in ("author", "uploaded_by"):
+            v = v[:120]
+        elif f.startswith("custom:"):
+            v = v[:300]
         else:
             v = v[:{"doc_title": 200, "summary": 600, "version": 30}[f]]
         ok[f] = v
@@ -2070,9 +2143,14 @@ def build_proposal(docs: list, per_doc: dict | None, changes: dict, source: str)
         ch = per_doc.get(d["id"], {}) if per_doc is not None else changes
         diff = {}
         for f, v in ch.items():
-            old = d["status"] if f == "status" else d["meta"].get(f, "")
-            if str(old) != str(v):
-                diff[f] = [str(old), str(v)]
+            old = get_field(d, f)
+            if f == "name" and "." not in v:
+                v = f"{v}.{d['ext']}"
+            if f.startswith("custom:") and v and not old and len(d["meta"].get("custom") or {}) >= MAX_CUSTOM:
+                errors.append(f"{d['meta'].get('dcn', '-')} already has {MAX_CUSTOM} custom fields.")
+                continue
+            if old != str(v):
+                diff[f] = [old, str(v)]
         if "dcn" in diff and q1("SELECT 1 FROM docs WHERE org_id=? AND dcn=? AND id!=?", U["org_id"], diff["dcn"][1], d["id"]):
             errors.append(f"{diff.pop('dcn')[1]} is already used by another document.")
         if diff:
@@ -2080,7 +2158,7 @@ def build_proposal(docs: list, per_doc: dict | None, changes: dict, source: str)
     fields = {f for it in items for f in it["diff"]}
     why = []
     if fields & HIGH_RISK:
-        why.append("it touches " + ", ".join(FIELD_LABELS[f] for f in sorted(fields & HIGH_RISK)))
+        why.append("it touches " + ", ".join(field_label(f) for f in sorted(fields & HIGH_RISK)))
     if source == "ai":
         why.append("the values are AI-suggested")
     if len(items) > BULK_AUTO_LIMIT:
@@ -2111,8 +2189,7 @@ def apply_proposal(p: dict) -> dict:
                 raise ValueError(f"{it['dcn']} no longer exists.")
             d = doc_of(r)
             for f, (old, _) in it["diff"].items():
-                cur = d["status"] if f == "status" else d["meta"].get(f, "")
-                if str(cur) != old:
+                if get_field(d, f) != old:
                     raise ValueError(f"{it['dcn']} changed since the preview. Please ask again.")
             _update_meta_nt(d, {f: v[1] for f, v in it["diff"].items() if f != "status"}, it["diff"].get("status", [None, d["status"]])[1])
             undo[it["id"]] = {f: v[0] for f, v in it["diff"].items()}
@@ -2171,7 +2248,7 @@ def assistant_turn(text: str) -> dict:
     ss_.ma_prev = [d["id"] for d in docs]
     audit("assistant_ask", request=text, intent=intent, targets=len(docs))
     if intent == "show":
-        rows = [{"DCN": d["meta"].get("dcn", "-"), "Title": d["meta"]["doc_title"], "Client": d["meta"]["client"], "Type": d["meta"]["doc_type"],
+        rows = [{"DCN": d["meta"].get("dcn", "-"), "Title": d["meta"]["doc_title"], "Author": d.get("author", ""), "Client": d["meta"]["client"], "Type": d["meta"]["doc_type"],
                  "Module": d["meta"]["sap_module"], "Dept": d["meta"].get("department", "-"), "Security": d["meta"].get("security", "Internal"),
                  "Status": d["status"]} for d in docs[:25]]
         return new_msg(f"Found **{len(docs)}** document(s)" + (" (showing 25)." if len(docs) > 25 else "."), table=rows)
@@ -2241,7 +2318,7 @@ def proposal_html(p: dict) -> str:
         return esc(s if len(s) <= 160 else s[:157] + "…")
     out = ""
     for it in p["items"][:15]:
-        rows = "".join(f'<div class="row"><span class="chip p">{esc(FIELD_LABELS[f])}</span><span class="diff-old">{short(o)}</span> → '
+        rows = "".join(f'<div class="row"><span class="chip p">{esc(field_label(f))}</span><span class="diff-old">{short(o)}</span> → '
                        f'<span class="diff-new">{short(n)}</span></div>' for f, (o, n) in it["diff"].items())
         out += f'<div class="ma-doc"><b>{esc(it["dcn"])}</b> · {esc(it["title"])}{rows}</div>'
     if len(p["items"]) > 15:
@@ -2299,6 +2376,9 @@ def render_assistant() -> None:
             if not ss_.ma_chat and not prompt:
                 st.markdown("**Try saying:**\n"
                             "- “Set the department of DCN-2026-0004 to Finance”\n"
+                            "- “Add author Nadeem Sohail to DCN-2026-0001”\n"
+                            "- “Add a Project Manager = Ali Khan to the selected documents”\n"
+                            "- “Change the file name of DCN-2026-0003 to Cutover_Plan_v2”\n"
                             "- “Mark DCN-2026-0002 as Superseded”\n"
                             "- “Rename DCN-2026-0007 to ‘Cutover Plan v2’”\n"
                             "- “Make the selected documents Confidential”\n"
@@ -2483,7 +2563,7 @@ if PAGE == "Admin" and U["admin"]:
         if all_docs:
             st.dataframe(pd.DataFrame([{"DCN": d["meta"].get("dcn", "-"), "Title": d["meta"]["doc_title"], "Dept": d["meta"].get("department", "-"),
                                         "Security": d["meta"].get("security", "Internal"), "Client": d["meta"]["client"], "Status": d["status"],
-                                        "Added by": d["uploaded_by"]} for d in all_docs]), use_container_width=True, hide_index=True)
+                                        "Author": d["author"], "Added by": d["uploaded_by"]} for d in all_docs]), use_container_width=True, hide_index=True)
             docs_map = {d["id"]: d for d in all_docs}
             pick = st.selectbox("Select document", list(docs_map), format_func=lambda i: f"{docs_map[i]['meta'].get('dcn', '-')} | {docs_map[i]['meta']['doc_title']}")
             d = docs_map[pick]
