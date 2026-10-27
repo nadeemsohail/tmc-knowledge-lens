@@ -55,6 +55,9 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+# Import the new UI theme
+from ui_theme import CSS, topbar, footer_html
+
 st.set_page_config(page_title="TMC Knowledge Lens", page_icon="🔍", layout="wide")
 LOG = logging.getLogger("knowledge_lens")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -179,83 +182,13 @@ def neutralize(s: str) -> str:
 
 
 # =============================================================================
-# 2. Styling
+# 2. Styling (Now imported from ui_theme)
 # =============================================================================
-CSS = """
-<style>
-.stApp{background:#F5F6FA;font-family:'Inter','Segoe UI',sans-serif}
-#MainMenu,footer{visibility:hidden}
-div[data-testid="stVerticalBlockBorderWrapper"]{border-radius:18px}
-.stButton>button,.stDownloadButton>button{border-radius:999px;font-weight:600}
-.stButton>button[kind="primary"]{background:#0F6B45;border:none;color:#fff}
-.stButton>button[kind="primary"]:hover{background:#138A58}
-.topbar{display:flex;flex-wrap:wrap;align-items:center;gap:20px;padding:24px 32px;border-radius:22px;margin-bottom:16px;
-  background:linear-gradient(120deg,#08402B 0%,#0F6B45 55%,#1A8A5A 100%);box-shadow:0 10px 28px rgba(10,79,52,.30)}
-.topbar .logo{background:#fff;border-radius:18px;padding:12px 18px;display:flex;align-items:center;box-shadow:0 4px 14px rgba(0,0,0,.18);flex-shrink:0}
-.topbar .logo img{height:70px;width:auto;display:block}
-.topbar .titles{flex:1;min-width:250px}
-.topbar h1{color:#fff;margin:0;font-size:2.2rem;font-weight:800;line-height:1.08}
-.topbar p{color:#D4EDE0;margin:8px 0 0;font-size:1rem;max-width:780px}
-.topbar .pills{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}
-.topbar .pill{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:999px;padding:8px 16px;font-size:.85rem;white-space:nowrap}
-section[data-testid="stSidebar"]{background:#1E2227!important;border-right:1px solid #2E343B}
-section[data-testid="stSidebar"] :is(h1,h2,h3,p,label,li,summary,small){color:#E6E9ED!important}
-section[data-testid="stSidebar"] [data-testid="stCaptionContainer"]{color:#9AA3AD!important}
-section[data-testid="stSidebar"] hr{border-color:#3A4048}
-section[data-testid="stSidebar"] :is(input,textarea){background:#2B3036!important;color:#fff!important}
-section[data-testid="stSidebar"] :is(div[data-baseweb="input"],div[data-baseweb="base-input"]){background:#2B3036!important;border-color:#444B53!important}
-section[data-testid="stSidebar"] [data-testid="stExpander"]{background:#262B31;border:1px solid #3A4048;border-radius:12px}
-section[data-testid="stSidebar"] .stButton>button{background:#2F353C;color:#fff;border:1px solid #4A525B}
-button[kind="header"],button[data-testid="baseButton-header"]{color:#fff!important}
-.block-container{padding-bottom:64px!important}
-.kl-footer{position:fixed;left:0;right:0;bottom:0;z-index:99;text-align:center;padding:10px 16px;font-size:.82rem;color:#C9D1D9;
-  background:linear-gradient(90deg,#14181C,#1E2227);border-top:2px solid #0F6B45}
-.kl-footer b{color:#fff}
-.hero{background:#fff;border:1px solid #E3E6EE;border-left:6px solid #0F6B45;border-radius:16px;padding:22px 28px;margin-bottom:14px}
-.hero h2{margin:0 0 6px;color:#0A4F34;font-size:1.7rem}.hero p{color:#3B4252;font-size:1.05rem;margin:0}
-.pcard{background:#fff;border:1px solid #E3E6EE;border-top:4px solid #0F6B45;border-radius:16px;padding:18px 22px;min-height:200px}
-.pcard h4{margin:0 0 8px;color:#0F6B45;font-size:1.1rem}.pcard p,.pcard li{color:#3B4252;font-size:.95rem;line-height:1.5}
-.pcard ul{padding-left:18px;margin:4px 0 0}
-.person{background:#fff;border:1px solid #E3E6EE;border-radius:16px;padding:20px 24px}
-.person a{color:#0F6B45;font-weight:600;text-decoration:none}.person .nm{font-size:1.25rem;font-weight:700;color:#0A4F34}
-.cmp{width:100%;border-collapse:collapse;background:#fff;border-radius:14px;overflow:hidden;font-size:.92rem}
-.cmp th{background:#0F6B45;color:#fff;text-align:left;padding:10px 14px}
-.cmp td{padding:10px 14px;border-top:1px solid #E8EAF0;vertical-align:top;color:#3B4252}.cmp td:first-child{font-weight:600;color:#0A4F34}
-.panel-title{font-weight:700;color:#0A4F34;font-size:1.05rem;margin:4px 0 6px}
-.small{font-size:.78rem;color:#6B7280}
-.chip{display:inline-block;background:#EEF2F7;color:#374151;border-radius:999px;padding:2px 10px;font-size:.74rem;margin:2px 4px 2px 0}
-.chip.ok{background:#DCFCE7;color:#166534}.chip.old{background:#FEF3C7;color:#92400E}.chip.p{background:#E0E7FF;color:#3730A3}
-.doc-title{font-weight:700;color:#111827;font-size:.95rem;line-height:1.25;margin-bottom:2px}
-.relbar{height:6px;background:#E5E7EB;border-radius:6px;margin:6px 0 2px;overflow:hidden}.relbar div{height:6px;background:#0F6B45}
-.snip{font-size:.8rem;color:#4B5563;background:#F9FAFB;border-left:3px solid #1FA67A;padding:6px 8px;margin-top:4px;border-radius:4px}
-.glance{background:#fff;border:1px solid #E3E6EE;border-radius:14px;padding:14px 18px;margin:8px 0;color:#374151}.glance h4{margin:0 0 6px;color:#0F6B45}
-.rolecard{background:#fff;border:1px solid #E3E6EE;border-radius:14px;padding:14px;min-height:120px}.rolecard .ic{font-size:1.5rem}.rolecard .s{font-size:.82rem;color:#4B5563;margin-top:4px}
-.chart-title{font-weight:700;color:#111827}
-.kpi-row{display:flex;gap:16px;margin-bottom:24px;align-items:stretch;flex-wrap:wrap}
-.kpi-modern{background:#fff;border:1px solid #E5E7EB;border-radius:16px;padding:20px;box-shadow:0 4px 6px -1px rgba(0,0,0,.05);flex:1;min-width:150px}
-.kpi-icon{width:40px;height:40px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.25rem}
-.kpi-value{font-size:2.1rem;font-weight:800;color:#111827;line-height:1;margin-top:16px}
-.kpi-label{font-size:.9rem;font-weight:600;color:#4B5563;margin-top:4px}.kpi-sub{font-size:.75rem;color:#6B7280;margin-top:6px}
-.insight-banner{background:linear-gradient(135deg,#F0FDF4,#DCFCE7);border:1px solid #BBF7D0;border-left:6px solid #16A34A;border-radius:12px;padding:16px 24px;margin-bottom:24px}
-.insight-banner h4{margin:0 0 4px;color:#166534}.insight-banner p{margin:0;color:#14532D}
-div[data-testid="stChatInput"]>div{background:#fff!important;border:1px solid #E6E8EE!important;border-radius:999px!important;box-shadow:0 6px 20px rgba(15,23,42,.08)}
-div[data-testid="stChatInput"]>div:focus-within{border-color:#0F6B45!important}
-div[data-testid="stChatInput"] button{border-radius:50%!important;background:#0F6B45!important;color:#fff!important}
-.diff-old{background:#FEE2E2;color:#991B1B;text-decoration:line-through;border-radius:6px;padding:1px 6px;font-size:.8rem}
-.diff-new{background:#DCFCE7;color:#166534;border-radius:6px;padding:1px 6px;font-size:.8rem;font-weight:600}
-.ma-doc{background:#fff;border:1px solid #E3E6EE;border-left:4px solid #0F6B45;border-radius:12px;padding:10px 14px;margin:6px 0}
-.ma-doc .row{margin-top:5px;font-size:.85rem;color:#374151}
-.ma-badge{display:inline-block;border-radius:999px;padding:2px 12px;font-size:.78rem;font-weight:700;margin-bottom:4px}
-.ma-badge.pending{background:#FEF3C7;color:#92400E}.ma-badge.applied{background:#DCFCE7;color:#166534}
-.ma-badge.undone,.ma-badge.cancelled{background:#E5E7EB;color:#374151}.ma-badge.error{background:#FEE2E2;color:#991B1B}
-</style>
-"""
 st.markdown(CSS, unsafe_allow_html=True)
 
 
 def render_footer() -> None:
-    st.markdown(f'<div class="kl-footer"><b>TMC Knowledge Lens</b> v{APP_VERSION} • Built by TMC AI Internal Digital Department © {datetime.now().year}</div>',
-                unsafe_allow_html=True)
+    st.markdown(footer_html(APP_VERSION), unsafe_allow_html=True)
 
 
 # =============================================================================
@@ -1348,8 +1281,7 @@ def complete_reset(token: str, new_pw: str) -> str | None:
 
 
 def auth_header(subtitle: str) -> None:
-    st.markdown(f"""<div class="topbar"><div class="logo"><img src="https://tmcltd.com/wp-content/uploads/2025/10/TallyMarks-Consulting-TMC-logo.webp" alt="TMC"></div>
-<div class="titles"><h1>🔍 Knowledge Lens</h1><p>{esc(subtitle)}</p></div></div>""", unsafe_allow_html=True)
+    st.markdown(topbar(subtitle), unsafe_allow_html=True)
 
 
 def render_login() -> None:
@@ -1588,10 +1520,10 @@ selected_docs = get_docs(U, _selected_ids)
 ss_.selected = {d["id"] for d in selected_docs}  # drop anything no longer visible / deleted
 _n_visible = q1(f"SELECT COUNT(*) AS n FROM docs d WHERE {scope(U)[0]}", *scope(U)[1])["n"]
 
-st.markdown(f"""<div class="topbar"><div class="logo"><img src="https://tmcltd.com/wp-content/uploads/2025/10/TallyMarks-Consulting-TMC-logo.webp" alt="TMC"></div>
-<div class="titles"><h1>🔍 Knowledge Lens</h1><p>Search project knowledge, select what matters, get cited answers and ready-to-send reports.</p></div>
-<div class="pills"><span class="pill">📚 {_n_visible} documents</span><span class="pill">☑️ {len(selected_docs)} selected</span>
-<span class="pill">{ROLES[U["role"]]["icon"]} {esc(U["name"])} • {esc(U["role"])}</span></div></div>""", unsafe_allow_html=True)
+st.markdown(topbar(
+    "Search project knowledge, select what matters, get cited answers and ready-to-send reports.",
+    [f"📚 {_n_visible} documents", f"☑️ {len(selected_docs)} selected",
+     f'{ROLES[U["role"]]["icon"]} {U["name"]} • {U["role"]}']), unsafe_allow_html=True)
 
 PAGES = [("Workspace", "🧭 Workspace"), ("Assistant", "🤖 Metadata Assistant"), ("Admin", "🛠️ Admin & Metrics"), ("About", "📖 About App"),
          ("How", "🧑‍🏫 How to Use"), ("Contact", "✉️ Contact Us")]
