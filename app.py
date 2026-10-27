@@ -28,6 +28,7 @@ import secrets
 import smtplib
 import sqlite3
 import struct
+import tempfile
 import threading
 import time
 import uuid
@@ -44,7 +45,7 @@ import docx
 import openpyxl
 import pandas as pd
 import pypdf
-import requests  # Added for logo downloading
+import requests
 import streamlit as st
 from openai import BadRequestError, OpenAI
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -52,7 +53,6 @@ from openpyxl.utils import get_column_letter
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
@@ -102,7 +102,6 @@ MODULE_LABELS = {"FI/CO": "Finance (FI/CO)", "HCM": "HR (HCM)", "MM": "Materials
                  "PP": "Production (PP)", "PM": "Plant Maintenance (PM)", "QM": "Quality (QM)", "WM/EWM": "Warehouse (WM/EWM)",
                  "BTP": "Business Technology Platform (BTP)"}
 
-# Commercial plans: per-organisation limits (daily limits reset at 00:00 UTC)
 PLANS = {
     "Free": {"docs": 25, "seats": 3, "ask": 30, "summary": 10, "report": 5, "assist": 20},
     "Team": {"docs": 2000, "seats": 25, "ask": 500, "summary": 200, "report": 100, "assist": 300},
@@ -146,7 +145,6 @@ def module_label(m: str) -> str:
 
 
 def access_label(t: str) -> str:
-    """Access tokens: 'SAP' = every module of SAP; 'SAP::FI/CO' = one module."""
     if "::" in t:
         s_, m_ = t.split("::", 1)
         return f"{s_} › {module_label(m_)}"
@@ -181,7 +179,6 @@ def clean(s) -> str:
 
 
 def neutralize(s: str) -> str:
-    """Stop document text from closing our <sources> delimiter."""
     return re.sub(r"</?\s*sources\s*>", "", s, flags=re.I)
 
 
@@ -290,7 +287,6 @@ def audit(action: str, _org=None, _user=None, **detail) -> None:
 # 4. LLM client, quotas and rate limiting
 # =============================================================================
 def find_api_key():
-    """Accepts GITHUB_TOKEN (GitHub Models), GROQ_API_KEY (Groq) or a generic LLM_API_KEY."""
     for name in ("GITHUB_TOKEN", "GROQ_API_KEY", "LLM_API_KEY"):
         key = secret(name)
         if key:
@@ -303,7 +299,6 @@ if not API_KEY:
     st.error('No API key found. Add `GITHUB_TOKEN = "..."` (or `GROQ_API_KEY`) to the app secrets or environment and reboot.')
     st.stop()
 
-# Provider is chosen from the key unless LLM_BASE_URL is set: gsk_... -> Groq, anything else -> GitHub Models
 IS_GROQ = API_KEY.startswith("gsk_")
 BASE_URL = str(secret("LLM_BASE_URL", "https://api.groq.com/openai/v1" if IS_GROQ else "https://models.github.ai/inference"))
 MODEL = MODEL_OVERRIDE or ("openai/gpt-oss-120b" if IS_GROQ else "openai/gpt-4.1")
@@ -366,7 +361,6 @@ def used_today(org_id: str, kind: str) -> int:
 
 
 def guard_llm(kind: str | None = None) -> None:
-    """Per-user rate limit + per-organisation daily plan quota. Raises QuotaError."""
     u = ss_.user
     dq, lock = _throttle()
     t = time.time()
@@ -445,7 +439,6 @@ EXTRACTORS = {"pdf": extract_pdf, "docx": extract_docx, "pptx": extract_pptx, "x
 
 
 def validate_upload(ext: str, raw: bytes) -> None:
-    """Reject spoofed extensions and zip bombs before parsing."""
     if ext == "pdf" and not raw.startswith(b"%PDF"):
         raise ValueError("content is not a PDF")
     if ext in ("docx", "pptx", "xlsx"):
@@ -467,7 +460,7 @@ def load_taxonomy(settings: str) -> dict:
         stored = {}
     stored = stored if isinstance(stored, dict) else {}
     t = {**DEFAULT_TAXONOMY, **stored}
-    old = stored.get("sap_modules")  # v2.1 and older stored a flat SAP module list
+    old = stored.get("sap_modules")
     if "systems" not in stored and isinstance(old, list) and old:
         t["systems"] = {**DEFAULT_TAXONOMY["systems"], "SAP": old}
     t.pop("sap_modules", None)
@@ -506,7 +499,6 @@ def make_snippet(text: str, qtokens: list[str], width: int = 240) -> str:
 
 
 def normalize_meta(m: dict) -> dict:
-    """v2.1 -> v2.2: 'sap_module' becomes system='SAP' + module."""
     if "sap_module" in m:
         mod = m.pop("sap_module")
         m.setdefault("system", "SAP")
@@ -524,8 +516,6 @@ def meta_blob(m: dict, name: str, author: str = "") -> str:
 
 
 def scope(u: dict, flt: dict | None = None, alias: str = "d") -> tuple[str, list]:
-    """SQL WHERE fragment: tenant isolation, approval state, role/system/module access and optional UI filters.
-    Everyone sees Approved documents plus their own submissions; flt['any_approval'] (reviewers) lifts the approval rule."""
     a = alias
     flt = flt or {}
     sql, p = f"{a}.org_id=? AND {a}.deleted_at IS NULL", [u["org_id"]]
@@ -578,7 +568,6 @@ def get_docs(u: dict, ids: list[str], any_approval: bool = False) -> list[dict]:
 
 
 def get_docs_any(u: dict, ids: list[str]) -> list[dict]:
-    """For reviewers: also returns documents that are still pending approval."""
     return get_docs(u, ids, True)
 
 
@@ -615,12 +604,11 @@ DCN_RE = re.compile(r"\bDCN-\d{4}-\d{3,6}\b", re.I)
 
 
 def search_docs(u: dict, query: str, tax: dict, flt: dict | None = None) -> list[dict]:
-    """Exact DCN matches always come first (100%); remaining words use full-text ranking."""
     dcns = {m.upper() for m in DCN_RE.findall(query)}
     rest = DCN_RE.sub(" ", query).strip()
     exact: list[dict] = []
     if dcns:
-        sql, p = scope(u, {**(flt or {}), "old": True})  # a DCN typed on purpose is found even if superseded
+        sql, p = scope(u, {**(flt or {}), "old": True})
         rows = q(f"SELECT d.id, d.dcn FROM docs d WHERE {sql} AND upper(d.dcn) IN ({','.join('?' * len(dcns))})", *p, *dcns)
         exact = [{"id": r["id"], "rel": 100, "page": None, "snippet": f"Exact match on {r['dcn']}"} for r in rows]
         if not rest:
@@ -641,7 +629,7 @@ def retrieve(query: str, docs: list[dict], tax: dict, k: int = 8) -> list[dict]:
                  fts_query(qt), *info, k)
         hits = [(r["doc_id"], r["page"], r["text"]) for r in rows]
     have = {h[0] for h in hits}
-    for did in info:  # guarantee every selected document is represented
+    for did in info:
         if did not in have:
             r = q1("SELECT page,text FROM chunks WHERE doc_id=? AND page>0 ORDER BY page LIMIT 1", did)
             if r:
@@ -708,7 +696,7 @@ def auto_tag(filename: str, text: str, tax: dict) -> dict:
         m = {}
     
     system = pick_from(m.get("system"), list(systems))
-    tags = as_list(m.get("tags"))[:10]  # Max 10 tags
+    tags = as_list(m.get("tags"))[:10]
     
     return {
         "client": canon_client(m.get("client"), tax), 
@@ -789,11 +777,10 @@ def ingest(file, sec_level: str, tax: dict):
     except QuotaError as e:
         return "error", str(e)
 
-    # AI reads the document and determines ALL metadata including department and tags
     meta = auto_tag(safe, " ".join(pages)[:10000], tax)
     meta["security"] = sec_level
     
-    pending = u["role"] == ROLE_CONS  # consultants submit; Admin / MPO approve
+    pending = u["role"] == ROLE_CONS
     doc_id = uuid.uuid4().hex[:10]
     folder = DATA / "files" / u["org_id"]
     folder.mkdir(parents=True, exist_ok=True)
@@ -825,7 +812,7 @@ def ingest(file, sec_level: str, tax: dict):
     return "success", (f"Submitted “{meta['doc_title']}” ({meta['dcn']}).{note}" if pending else f"Added “{meta['doc_title']}” ({meta['dcn']}).{note}")
 
 
-COLUMN_FIELDS = ("author", "name", "uploaded_by", "uploaded_at")  # stored in table columns, not in the meta JSON
+COLUMN_FIELDS = ("author", "name", "uploaded_by", "uploaded_at")
 MAX_CUSTOM = 20
 
 
@@ -865,7 +852,6 @@ def set_field(d: dict, f: str, v: str) -> None:
 
 
 def _update_meta_nt(d: dict, fields: dict, status: str) -> None:
-    """Write any mix of meta / column / custom fields + status for one document and refresh its search chunk. Caller owns the transaction."""
     for f, v in fields.items():
         set_field(d, f, v)
     d["status"] = status
@@ -954,45 +940,54 @@ def build_pptx(r: dict) -> bytes:
     NAVY = RGBColor(10, 25, 47)         # #0A192F (Navy Blue Background)
     WHITE = RGBColor(255, 255, 255)     # White text
     LIGHT_BG = RGBColor(30, 41, 59)     # Lighter navy for table rows
-    GREY = RGBColor(148, 163, 184)      # Grey for subtitles
 
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
 
-    # Try to download the logo to a temporary file
-    logo_path = None
+    # Download Logo to a temporary file
+    logo_temp = None
     try:
-        logo_res = requests.get(LOGO_URL, timeout=5)
-        if logo_res.status_code == 200:
-            logo_path = io.BytesIO(logo_res.content)
-    except Exception:
-        pass  # Continue without logo if download fails
+        res = requests.get(LOGO_URL, timeout=5)
+        if res.status_code == 200:
+            f = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+            f.write(res.content)
+            f.close()
+            logo_temp = f.name
+    except Exception as e:
+        LOG.warning(f"Could not download logo for PPTX: {e}")
 
     def add_master_slide(title: str):
-        """Helper to create a slide with the Golden header, Navy background, and TMC logo."""
         slide = prs.slides.add_slide(prs.slide_layouts[6])  # Blank layout
         
-        # Background
+        # 1. Background
         bg = slide.shapes.add_shape(1, 0, 0, prs.slide_width, prs.slide_height)
         bg.fill.solid()
         bg.fill.fore_color.rgb = NAVY
         bg.line.fill.background()
 
-        # Golden Header Bar
+        # 2. Golden Header Bar
         hdr = slide.shapes.add_shape(1, 0, 0, prs.slide_width, Inches(1.2))
         hdr.fill.solid()
         hdr.fill.fore_color.rgb = GOLD
         hdr.line.fill.background()
 
-        # Logo (Top Right)
-        if logo_path:
+        # 3. Logo (Top Right)
+        if logo_temp and Path(logo_temp).exists():
             try:
-                slide.shapes.add_picture(logo_path, Inches(10.8), Inches(0.2), width=Inches(1.8))
+                slide.shapes.add_picture(logo_temp, Inches(10.8), Inches(0.2), width=Inches(1.8))
             except Exception:
-                pass # Fallback if logo format is invalid
+                pass
+        else:
+            # Fallback to a drawn text box if logo fails
+            tb = slide.shapes.add_textbox(Inches(10.8), Inches(0.2), Inches(1.8), Inches(0.8))
+            tf = tb.text_frame
+            tf.text = "TMC"
+            tf.paragraphs[0].font.size = Pt(24)
+            tf.paragraphs[0].font.bold = True
+            tf.paragraphs[0].font.color.rgb = NAVY
 
-        # Title Text
+        # 4. Title Text (Inside the golden bar)
         txBox = slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(10), Inches(0.8))
         tf = txBox.text_frame
         tf.text = title
@@ -1079,6 +1074,10 @@ def build_pptx(r: dict) -> bytes:
 
     buf = io.BytesIO()
     prs.save(buf)
+    
+    if logo_temp and Path(logo_temp).exists():
+        Path(logo_temp).unlink()
+        
     return buf.getvalue()
 
 
@@ -1091,7 +1090,7 @@ def build_xlsx(r: dict) -> bytes:
         for c in ws[1]:
             c.font, c.fill = head, fill
         for row in rows:
-            ws.append([("'" + str(v) if str(v)[:1] in "=+-@" else str(v))[:32000] for v in row])  # block formula injection
+            ws.append([("'" + str(v) if str(v)[:1] in "=+-@" else str(v))[:32000] for v in row])
         for i, w in enumerate(widths):
             ws.column_dimensions[get_column_letter(i + 1)].width = w
         for row in ws.iter_rows(min_row=2):
@@ -1171,6 +1170,7 @@ def build_cites(ans: str, hits: list, question: str) -> list[dict]:
              "snippet": make_snippet(hits[n - 1]["text"], tok(question), 280)} for n in used]
 
 
+@st.cache_data(show_spinner=False, hash_funcs={dict: lambda d: d["id"]})
 def make_report(rtype: str, focus: str, docs: list, tax: dict) -> dict:
     hits = retrieve(focus or rtype, docs, tax, k=12)
     ctx = "\n\n".join(f"[{h['doc_title']} - {h['unit']} {h['page']}]\n{neutralize(h['text'][:1800])}" for h in hits)
@@ -1261,7 +1261,6 @@ def send_mail(to: str, subject: str, body: str) -> bool:
 
 
 def create_org(org_name: str, name: str, username: str, email: str, pw: str, plan: str = "Free", by: str = "signup") -> str | None:
-    """Returns an error message or None."""
     username = username.strip().lower()
     if not org_name.strip() or not name.strip() or not re.fullmatch(r"[a-z0-9._-]{3,32}", username):
         return "Enter organisation, full name and a username (3-32 letters, numbers, dots or dashes)."
@@ -1281,7 +1280,6 @@ def create_org(org_name: str, name: str, username: str, email: str, pw: str, pla
 
 
 def migrate_legacy() -> None:
-    """One-off import of v1 JSON data (users.json / library.json) into a default organisation."""
     lib_p, usr_p = DATA / "library.json", DATA / "users.json"
     if q1("SELECT 1 FROM orgs LIMIT 1") or not (lib_p.exists() or usr_p.exists()):
         return
@@ -1314,7 +1312,6 @@ def migrate_legacy() -> None:
 
 
 def migrate_schema() -> None:
-    """Idempotent upgrade of older databases (approval columns, sap_module -> system/module, access tokens)."""
     cols = {r["name"] for r in q("PRAGMA table_info(docs)")}
     for c, ddl in (("approval", "TEXT NOT NULL DEFAULT 'Approved'"), ("submitted_by", "TEXT"), ("reviewed_by", "TEXT"),
                    ("reviewed_at", "TEXT"), ("review_note", "TEXT")):
@@ -1369,7 +1366,7 @@ def try_login(username: str, password: str, code: str):
     un, t = (username or "").strip().lower(), time.time()
     r = q1("SELECT u.*, o.active AS org_active FROM users u JOIN orgs o ON o.id=u.org_id WHERE u.username=?", un)
     if not r or not r["active"] or not r["org_active"]:
-        hash_pw(password or "x")  # equalise timing
+        hash_pw(password or "x")
         audit("login_failed", _user=un)
         return GENERIC_LOGIN_ERROR
     if r["locked_until"] > t:
@@ -1659,7 +1656,7 @@ def add_comment(doc: dict, text: str) -> None:
 # =============================================================================
 _selected_ids = list(ss_.selected)
 selected_docs = get_docs(U, _selected_ids)
-ss_.selected = {d["id"] for d in selected_docs}  # drop anything no longer visible / deleted
+ss_.selected = {d["id"] for d in selected_docs}
 _n_visible = q1(f"SELECT COUNT(*) AS n FROM docs d WHERE {scope(U)[0]}", *scope(U)[1])["n"]
 
 st.markdown(topbar(
@@ -1841,7 +1838,6 @@ if PAGE == "Workspace":
                          + (f' • 📍 {esc(d["unit"])} {int(it["page"])}' if it["page"] else "") + "</div>")
                 if it["snippet"]:
                     body += f'<div class="snip">{esc(it["snippet"])}</div>'
-            # Display tags in the list
             if m.get("tags"):
                 body += "".join(f'<span class="chip" style="background:#F3F4F6;color:#374151;border:1px solid #D1D5DB">#{esc(t)}</span>' for t in m["tags"][:4])
                 if len(m["tags"]) > 4:
@@ -1972,7 +1968,9 @@ if PAGE == "Workspace":
             with st.spinner("Writing the report in 4 formats…"):
                 try:
                     guard_llm("report")
-                    ss_.report = make_report(rtype, focus.strip(), selected_docs, tax)
+                    # Pass selected IDs to cache hash so Streamlit knows when to invalidate
+                    sel_ids = tuple(sorted([d["id"] for d in selected_docs]))
+                    ss_.report = make_report(rtype, focus.strip(), selected_docs, tax, _sel_ids=sel_ids)
                     audit("report", rtype=rtype, docs=[d["name"] for d in selected_docs])
                 except QuotaError as e:
                     st.warning(str(e))
@@ -2132,7 +2130,6 @@ def cb_delete_user(sel):
 
 
 def export_org_zip() -> bytes:
-    """Tenant data export (GDPR-style portability): metadata, comments, users (no secrets), audit."""
     oid = U["org_id"]
     docs = [{**{k: r[k] for k in ("id", "dcn", "name", "author", "status", "uploaded_by", "uploaded_at", "deleted_at")}, "meta": json.loads(r["meta"])}
             for r in q("SELECT * FROM docs WHERE org_id=?", oid)]
@@ -2170,10 +2167,10 @@ ALIASES = {"title": "doc_title", "document_title": "doc_title", "type": "doc_typ
            "uploaded": "uploaded_by", "date": "uploaded_at", "date_added": "uploaded_at", "created": "uploaded_at", "writer": "author",
            "authors": "author", "document_control_number": "dcn", "tag": "tags", "keywords": "tags"}
 CUSTOM_RE = re.compile(r"custom:\s*([A-Za-z][A-Za-z0-9 _-]{0,39})", re.I)
-LIST_FIELDS = {"department": "departments", "doc_type": "doc_types", "phase": "phases", "industry": "industries"}  # extendable by chat
+LIST_FIELDS = {"department": "departments", "doc_type": "doc_types", "phase": "phases", "industry": "industries"}
 LIST_LABELS = {"departments": "the Department list", "doc_types": "the Document type list", "phases": "the Phase list", "industries": "the Industry list"}
-HIGH_RISK = {"security", "status", "dcn", "uploaded_by", "uploaded_at"}  # sensitive/provenance fields always wait for the user's OK
-BULK_AUTO_LIMIT = 5                                                      # more documents than this also waits for OK
+HIGH_RISK = {"security", "status", "dcn", "uploaded_by", "uploaded_at"}
+BULK_AUTO_LIMIT = 5
 FILTER_FIELDS = ("client", "doc_type", "system", "module", "project_name", "phase", "department", "security", "industry")
 STATUS_BADGE = {"pending": "⏳ Needs your OK", "applied": "✅ Applied", "undone": "↩️ Undone", "cancelled": "✖️ Cancelled", "error": "⚠️ Not applied"}
 ss_.setdefault("ma_chat", [])
@@ -2248,7 +2245,6 @@ def filter_docs(f: dict, limit: int = 200) -> list[dict]:
 
 
 def resolve_targets(plan: dict, text: str):
-    """Returns (docs, problem). Problem is a user-facing question/explanation when targets are unclear."""
     t = plan.get("target") if isinstance(plan.get("target"), dict) else {}
     dcns = {d.strip().upper() for d in as_list(t.get("dcns")) if DCN_RE.fullmatch(d.strip())} | {d.upper() for d in DCN_RE.findall(text)}
     if dcns:
@@ -2290,7 +2286,6 @@ def _canon_key(f0):
 
 
 def _nice(v: str) -> str:
-    """Capitalise a brand-new vocabulary value that was typed in lower case."""
     return v if any(c.isupper() for c in v) else v.title()
 
 
@@ -2299,8 +2294,6 @@ def _match(v: str, opts) -> str | None:
 
 
 def validate_changes(raw, n_targets: int, ctx_system: str | None = None):
-    """Returns (clean changes, error messages, vocabulary additions). Unknown department/type/phase/industry/system/module values
-    are not errors: they become vocabulary additions that the user must confirm."""
     ok, errs, adds = {}, [], []
     if not isinstance(raw, dict):
         return ok, errs, adds
@@ -2433,7 +2426,6 @@ def retag_changes(d: dict) -> dict:
     return ch
 
 
-# ---- vocabulary additions (org taxonomy) ------------------------------------------------------
 def _org_settings() -> str:
     r = q1("SELECT settings FROM orgs WHERE id=?", U["org_id"])
     return r["settings"] if r else "{}"
@@ -2761,7 +2753,7 @@ def decide(doc_id: str, approve: bool, note: str) -> str:
             raise ValueError("This submission was already reviewed or removed.")
         d = doc_of(r)
         status, sup = d["status"], d.get("superseded_by")
-        if approve:  # version logic runs now, so unapproved files never supersede approved ones
+        if approve:
             other = detect_version(U["org_id"], d["meta"], " ".join(t for _, t in get_pages(doc_id)[:3]), exclude_id=doc_id)
             if other:
                 if vkey(d["meta"].get("version", ""), d["name"]) >= vkey(other["meta"].get("version", ""), other["name"]):
