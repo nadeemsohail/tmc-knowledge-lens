@@ -952,17 +952,15 @@ def build_pptx(r: dict) -> bytes:
     except ImportError:
         raise RuntimeError("The 'python-pptx' package is required to generate PowerPoint reports.")
 
-    # Theme Colors
-    GOLD = RGBColor(212, 175, 55)       # #D4AF37 (Golden)
-    NAVY = RGBColor(10, 25, 47)         # #0A192F (Navy Blue Background)
-    WHITE = RGBColor(255, 255, 255)     # White text
-    LIGHT_BG = RGBColor(30, 41, 59)     # Lighter navy for table rows
+    GOLD = RGBColor(212, 175, 55)       # #D4AF37
+    NAVY = RGBColor(10, 25, 47)         # #0A192F
+    WHITE = RGBColor(255, 255, 255)
+    LIGHT_BG = RGBColor(30, 41, 59)
 
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
 
-    # Download Logo to a temporary file
     logo_temp = None
     try:
         res = requests.get(LOGO_URL, timeout=5)
@@ -975,28 +973,24 @@ def build_pptx(r: dict) -> bytes:
         LOG.warning(f"Could not download logo for PPTX: {e}")
 
     def add_master_slide(title: str):
-        slide = prs.slides.add_slide(prs.slide_layouts[6])  # Blank layout
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
         
-        # 1. Background
         bg = slide.shapes.add_shape(1, 0, 0, prs.slide_width, prs.slide_height)
         bg.fill.solid()
         bg.fill.fore_color.rgb = NAVY
         bg.line.fill.background()
 
-        # 2. Golden Header Bar
         hdr = slide.shapes.add_shape(1, 0, 0, prs.slide_width, Inches(1.2))
         hdr.fill.solid()
         hdr.fill.fore_color.rgb = GOLD
         hdr.line.fill.background()
 
-        # 3. Logo (Top Right)
         if logo_temp and Path(logo_temp).exists():
             try:
                 slide.shapes.add_picture(logo_temp, Inches(10.8), Inches(0.2), width=Inches(1.8))
             except Exception:
                 pass
         else:
-            # Fallback to a drawn text box if logo fails
             tb = slide.shapes.add_textbox(Inches(10.8), Inches(0.2), Inches(1.8), Inches(0.8))
             tf = tb.text_frame
             tf.text = "TMC"
@@ -1004,17 +998,16 @@ def build_pptx(r: dict) -> bytes:
             tf.paragraphs[0].font.bold = True
             tf.paragraphs[0].font.color.rgb = NAVY
 
-        # 4. Title Text (Inside the golden bar)
         txBox = slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(10), Inches(0.8))
         tf = txBox.text_frame
         tf.word_wrap = True
         tf.text = title
         tf.paragraphs[0].font.size = Pt(28)
         tf.paragraphs[0].font.bold = True
-        tf.paragraphs[0].font.color.rgb = NAVY  # Navy text on Gold header
+        tf.paragraphs[0].font.color.rgb = NAVY
         return slide
 
-    # --- Slide 1: Title Slide ---
+    # Slide 1
     slide = add_master_slide("Executive Report")
     txBox = slide.shapes.add_textbox(Inches(0.8), Inches(2.5), Inches(11.5), Inches(1.5))
     tf = txBox.text_frame
@@ -1031,7 +1024,7 @@ def build_pptx(r: dict) -> bytes:
     sub.text_frame.paragraphs[0].font.size = Pt(18)
     sub.text_frame.paragraphs[0].font.color.rgb = GOLD
 
-    # --- Slide 2: Executive Summary ---
+    # Slide 2
     slide = add_master_slide("Executive Summary")
     txBox = slide.shapes.add_textbox(Inches(0.8), Inches(1.6), Inches(11.5), Inches(5.5))
     tf = txBox.text_frame
@@ -1041,7 +1034,7 @@ def build_pptx(r: dict) -> bytes:
     tf.paragraphs[0].font.color.rgb = WHITE
     tf.paragraphs[0].line_spacing = 1.4
 
-    # --- Section Slides ---
+    # Sections
     for sec in r["sections"]:
         chunks = [sec["bullets"][i:i + 5] for i in range(0, len(sec["bullets"]), 5)] or [[]]
         for n, chunk in enumerate(chunks):
@@ -1056,11 +1049,10 @@ def build_pptx(r: dict) -> bytes:
                 p.font.color.rgb = WHITE
                 p.space_after = Pt(12)
 
-    # --- Table Slide ---
+    # Table
     if r["table"]:
         cols, rows = r["table"]["columns"], r["table"]["rows"][:8]
         slide = add_master_slide("Summary Table")
-        
         tbl = slide.shapes.add_table(len(rows) + 1, len(cols), Inches(0.8), Inches(1.6), Inches(11.5), Inches(0.4 * (len(rows) + 1))).table
         for i, c in enumerate(cols):
             tbl.cell(0, i).text = c
@@ -1070,7 +1062,6 @@ def build_pptx(r: dict) -> bytes:
                 p.font.color.rgb = NAVY
                 p.font.bold = True
                 p.font.size = Pt(14)
-        
         for ri, row in enumerate(rows, 1):
             for ci, v in enumerate(row):
                 tbl.cell(ri, ci).text = v[:200]
@@ -1080,7 +1071,7 @@ def build_pptx(r: dict) -> bytes:
                     p.font.size = Pt(12)
                     p.font.color.rgb = WHITE
 
-    # --- Sources Slide ---
+    # Sources
     slide = add_master_slide("Sources")
     txBox = slide.shapes.add_textbox(Inches(0.8), Inches(1.6), Inches(11.5), Inches(5.5))
     tf = txBox.text_frame
@@ -1131,10 +1122,7 @@ def build_xlsx(r: dict) -> bytes:
 
 def build_pdf(r: dict) -> bytes:
     ss = getSampleStyleSheet()
-
-    def e(s):
-        return xml_escape(str(s)).encode("cp1252", "replace").decode("cp1252")
-
+    def e(s): return xml_escape(str(s)).encode("cp1252", "replace").decode("cp1252")
     story = [Paragraph(e(r["title"]), ss["Title"]), Paragraph(f"Generated by TMC Knowledge Lens • {datetime.now():%d %b %Y}", ss["Italic"]),
              Spacer(1, 12), Paragraph("Executive summary", ss["Heading2"]), Paragraph(e(r["executive_summary"]), ss["BodyText"])]
     for s in r["sections"]:
@@ -1655,15 +1643,15 @@ def render_turn_extras(i: int, c: dict) -> None:
             for x in c["cites"]:
                 st.markdown(f"**[S{x['n']}] {x['title']}** - {x['loc']}")
                 st.caption(x["snippet"])
-    b0, b1, b2, _ = st.columns([2.4, 1, 1, 5])
+    b0, b1, b2, _ = st.columns([2.4, 1.2, 1.2, 5])
     if c.get("ok", True):
         with b0.popover("📋 Copy"):
             st.code(c["a"], language=None)
     if c["rating"] is None:
-        b1.button("👍", key=f"fb_up_{c['uid']}", on_click=rate, args=(i, 1))
-        b2.button("👎", key=f"fb_dn_{c['uid']}", on_click=rate, args=(i, -1))
+        b1.button("👍 Helpful", key=f"fb_up_{c['uid']}", on_click=rate, args=(i, 1), use_container_width=True)
+        b2.button("👎 Not helpful", key=f"fb_dn_{c['uid']}", on_click=rate, args=(i, -1), use_container_width=True)
     elif c["rating"] != 0:
-        b1.caption("Thanks!")
+        b1.caption("Thanks for the feedback!")
 
 
 def add_comment(doc: dict, text: str) -> None:
@@ -1917,11 +1905,17 @@ if PAGE == "Workspace":
         ch1, ch2 = st.columns([3, 1])
         ch1.markdown('<div class="panel-title">💬 Chat with the selected documents</div>', unsafe_allow_html=True)
         ch2.button("🧹 Clear chat", on_click=clear_chat, disabled=not ss_.chat, use_container_width=True)
-        chat_box = st.container(height=330, border=False)
+        
         QUICK = [("⚠️ Key risks", "What are the key risks and issues?"), ("📅 Timeline", "What is the timeline and key milestones?"),
                  ("📦 Deliverables", "What are the main deliverables?"), ("🔁 Compare", "Compare these documents: similarities and differences.")]
         for (lab, text), qc in zip(QUICK, st.columns(4)):
             qc.button(lab, key=f"quick_{lab}", disabled=n == 0, on_click=lambda t=text: ss_.__setitem__("pending_q", t), use_container_width=True)
+
+        # Chat history container
+        chat_box = st.container(height=330, border=False)
+        
+        # Chat input pinned to bottom
+        st.markdown(f"<style>div[data-testid='stChatInput']::after{{content:'{n} source{'s' if n != 1 else ''}';}}</style>", unsafe_allow_html=True)
         prompt = st.chat_input("Ask a question" if n else "Select sources to start chatting", disabled=n == 0, max_chars=2000) or ss_.pop("pending_q", None)
 
         with chat_box:
@@ -1933,8 +1927,10 @@ if PAGE == "Workspace":
                 with st.chat_message("assistant"):
                     st.write(c["a"])
                     render_turn_extras(i, c)
-            if prompt:
-                prompt = prompt.strip()
+                    
+        if prompt:
+            prompt = prompt.strip()
+            with chat_box:
                 with st.chat_message("user"):
                     st.write(prompt)
                 with st.chat_message("assistant"):
