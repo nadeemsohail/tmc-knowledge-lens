@@ -31,8 +31,10 @@ html,body,.stApp,[class*="css"]{font-family:'Inter','Segoe UI',system-ui,sans-se
 }
 #MainMenu,footer{visibility:hidden}
 header[data-testid="stHeader"]{background:transparent}
-/* FIX: Increased padding-bottom to 120px so the footer doesn't overlap content */
-.block-container{padding-top:1.4rem!important;padding-bottom:120px!important;max-width:1600px}
+
+/* --- FIX: Added 130px padding-bottom so content clears the fixed footer --- */
+.block-container{padding-top:1.4rem!important;padding-bottom:130px!important;max-width:1600px}
+
 h1,h2,h3,h4{letter-spacing:-.015em;color:var(--ink)}
 ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:8px}::-webkit-scrollbar-thumb:hover{background:#94A3B8}
 
@@ -204,8 +206,8 @@ div[data-testid="stChatInput"] button:disabled{background:#CBD5E1!important;box-
 .ma-badge.undone,.ma-badge.cancelled{background:#E2E8F0;color:#334155}.ma-badge.error{background:#FEE2E2;color:#991B1B}
 
 /* ---------- footer ---------- */
-.kl-footer{position:fixed;left:0;right:0;bottom:0;z-index:99;display:flex;justify-content:center;align-items:center;gap:10px;padding:10px 16px;font-size:.8rem;color:#CBD5E1;
-  background:rgba(11,18,32,.88);backdrop-filter:blur(12px);border-top:1px solid rgba(52,211,153,.4)}
+.kl-footer{position:fixed;left:0;right:0;bottom:0;z-index:99;display:flex;justify-content:center;align-items:center;gap:10px;padding:8px 16px;font-size:.78rem;color:#CBD5E1;
+  background:rgba(11,18,32,.92);backdrop-filter:blur(12px);border-top:1px solid rgba(52,211,153,.4)}
 .kl-footer b{color:#fff}
 .kl-footer .live{width:7px;height:7px;border-radius:50%;background:#34D399;animation:klpulse 2s infinite}
 
