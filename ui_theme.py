@@ -31,10 +31,7 @@ html,body,.stApp,[class*="css"]{font-family:'Inter','Segoe UI',system-ui,sans-se
 }
 #MainMenu,footer{visibility:hidden}
 header[data-testid="stHeader"]{background:transparent}
-
-/* --- FIX: Added 130px padding-bottom so content clears the fixed footer --- */
 .block-container{padding-top:1.4rem!important;padding-bottom:130px!important;max-width:1600px}
-
 h1,h2,h3,h4{letter-spacing:-.015em;color:var(--ink)}
 ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:8px}::-webkit-scrollbar-thumb:hover{background:#94A3B8}
 
@@ -187,13 +184,19 @@ div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"
 div[data-testid="stChatMessageAvatarAssistant"]{background:linear-gradient(135deg,var(--ai-1),var(--ai-2))!important;color:#fff}
 div[data-testid="stChatMessageAvatarUser"]{background:linear-gradient(135deg,#334155,#0F172A)!important;color:#fff}
 div[data-testid="stChatInput"]{background:transparent!important}
+
+/* --- FIX: Force chat input to stay single-line and fixed height --- */
 div[data-testid="stChatInput"]>div{
   background:linear-gradient(#fff,#fff) padding-box,linear-gradient(120deg,#10B981,#3B82F6,#8B5CF6,#10B981) border-box!important;
-  background-size:auto,300% 300%;border:1.5px solid transparent!important;border-radius:999px!important;min-height:56px;
-  box-shadow:0 8px 28px rgba(59,130,246,.14),0 2px 8px rgba(16,185,129,.12);animation:klflow 9s linear infinite}
+  background-size:auto,300% 300%;border:1.5px solid transparent!important;border-radius:999px!important;
+  height:56px !important; min-height:56px !important; max-height:56px !important;
+  box-shadow:0 8px 28px rgba(59,130,246,.14),0 2px 8px rgba(16,185,129,.12);animation:klflow 9s linear infinite;
+  padding: 0 16px !important;
+}
 div[data-testid="stChatInput"]>div:focus-within{box-shadow:0 10px 34px rgba(16,185,129,.28),0 0 0 4px rgba(16,185,129,.12)}
-div[data-testid="stChatInput"] textarea{font-size:1rem;color:var(--ink)}
-div[data-testid="stChatInput"] button{border-radius:50%!important;background:linear-gradient(135deg,#0B7A50,#10B981)!important;color:#fff!important;border:none;box-shadow:0 4px 12px rgba(16,185,129,.4)}
+/* Force the internal textarea to not expand vertically */
+div[data-testid="stChatInput"] textarea{font-size:1rem;color:var(--ink); height:56px !important; min-height:56px !important; max-height:56px !important; overflow-y:auto !important; padding-top:16px !important; padding-bottom:16px !important;}
+div[data-testid="stChatInput"] button{border-radius:50%!important;background:linear-gradient(135deg,#0B7A50,#10B981)!important;color:#fff!important;border:none;box-shadow:0 4px 12px rgba(16,185,129,.4); width:40px !important; height:40px !important;}
 div[data-testid="stChatInput"] button:disabled{background:#CBD5E1!important;box-shadow:none}
 
 /* ---------- metadata assistant ---------- */
