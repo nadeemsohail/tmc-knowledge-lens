@@ -47,7 +47,7 @@ import pandas as pd
 import pypdf
 import requests
 import streamlit as st
-from openai import BadRequestError, OpenAI
+from openai import BadRequestError, OpenAI, RateLimitError
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from pptx import Presentation
@@ -310,20 +310,35 @@ def get_client() -> OpenAI:
 
 
 def llm(messages, json_mode=False, temperature=0.1) -> str:
+    """Wrapper around the LLM call with exponential backoff for Rate Limit errors (429)."""
     kw = {"response_format": {"type": "json_object"}} if json_mode else {}
-    try:
-        r = get_client().chat.completions.create(model=MODEL, messages=messages, temperature=temperature, **kw)
-    except BadRequestError:
-        if not json_mode:
-            raise
-        r = get_client().chat.completions.create(model=MODEL, messages=messages, temperature=temperature)
-    return r.choices[0].message.content or ""
+    
+    for attempt in range(5):
+        try:
+            r = get_client().chat.completions.create(model=MODEL, messages=messages, temperature=temperature, **kw)
+            return r.choices[0].message.content or ""
+        except RateLimitError as e:
+            if attempt == 4:
+                raise QuotaError(f"Rate limit reached (429). The free tier is too small for this document. "
+                                 f"Please upgrade your Groq tier or try again later.") from e
+            # Exponential backoff: 2s, 4s, 8s, 16s
+            time.sleep(2 ** (attempt + 1))
+        except BadRequestError:
+            if not json_mode:
+                raise
+            # Try again without JSON mode if the model doesn't support it
+            kw = {}
+            
+    return ""
 
 
 def stream_llm(messages, temperature=0.1):
-    for ch in get_client().chat.completions.create(model=MODEL, messages=messages, temperature=temperature, stream=True):
-        if ch.choices and ch.choices[0].delta and ch.choices[0].delta.content:
-            yield ch.choices[0].delta.content
+    try:
+        for ch in get_client().chat.completions.create(model=MODEL, messages=messages, temperature=temperature, stream=True):
+            if ch.choices and ch.choices[0].delta and ch.choices[0].delta.content:
+                yield ch.choices[0].delta.content
+    except RateLimitError as e:
+        yield "\n\n⚠️ Rate limit reached. Please try again in a minute."
 
 
 def parse_json(raw: str) -> dict:
@@ -691,6 +706,8 @@ def auto_tag(filename: str, text: str, tax: dict) -> dict:
     )
     try:
         m = parse_json(llm([{"role": "system", "content": sys_prompt}, {"role": "user", "content": f"<sources>\n{neutralize(text)}\n</sources>"}], json_mode=True))
+    except QuotaError:
+        raise  # Re-raise to let UI handle it
     except Exception:
         LOG.exception("auto-tag failed for %s", filename)
         m = {}
@@ -1170,8 +1187,8 @@ def build_cites(ans: str, hits: list, question: str) -> list[dict]:
              "snippet": make_snippet(hits[n - 1]["text"], tok(question), 280)} for n in used]
 
 
-@st.cache_data(show_spinner=False, hash_funcs={dict: lambda d: d["id"]})
-def make_report(rtype: str, focus: str, docs: list, tax: dict) -> dict:
+@st.cache_data(show_spinner=False)
+def make_report(rtype: str, focus: str, docs: list, tax: dict, _sel_ids: tuple) -> dict:
     hits = retrieve(focus or rtype, docs, tax, k=12)
     ctx = "\n\n".join(f"[{h['doc_title']} - {h['unit']} {h['page']}]\n{neutralize(h['text'][:1800])}" for h in hits)
     sys = ("You write professional consulting reports from source excerpts only. Return ONLY JSON: "
@@ -1968,7 +1985,6 @@ if PAGE == "Workspace":
             with st.spinner("Writing the report in 4 formats…"):
                 try:
                     guard_llm("report")
-                    # Pass selected IDs to cache hash so Streamlit knows when to invalidate
                     sel_ids = tuple(sorted([d["id"] for d in selected_docs]))
                     ss_.report = make_report(rtype, focus.strip(), selected_docs, tax, _sel_ids=sel_ids)
                     audit("report", rtype=rtype, docs=[d["name"] for d in selected_docs])
