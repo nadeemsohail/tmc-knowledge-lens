@@ -1,11 +1,5 @@
 """
 ui_theme.py - modern, AI-product look for TMC Knowledge Lens.
-
-Drop-in: every CSS class used by app.py (topbar, pill, chip, kpi-modern, hero, pcard, ma-doc ...) is restyled,
-so no page logic changes. Exposes:
-    CSS                      -> st.markdown(CSS, unsafe_allow_html=True)
-    topbar(subtitle, pills)  -> hero banner HTML (pills = list of plain strings, escaped here)
-    footer_html(version)     -> glass footer HTML
 """
 from __future__ import annotations
 
@@ -37,7 +31,8 @@ html,body,.stApp,[class*="css"]{font-family:'Inter','Segoe UI',system-ui,sans-se
 }
 #MainMenu,footer{visibility:hidden}
 header[data-testid="stHeader"]{background:transparent}
-.block-container{padding-top:1.4rem!important;padding-bottom:72px!important;max-width:1600px}
+/* FIX: Increased padding-bottom to 120px so the footer doesn't overlap content */
+.block-container{padding-top:1.4rem!important;padding-bottom:120px!important;max-width:1600px}
 h1,h2,h3,h4{letter-spacing:-.015em;color:var(--ink)}
 ::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:8px}::-webkit-scrollbar-thumb:hover{background:#94A3B8}
 
