@@ -118,8 +118,8 @@ DEFAULT_TAXONOMY = {
     },
     "phases": ["Pre-Sales", "Prepare", "Explore", "Realize", "Deploy", "Run", "Other"],
     "doc_types": ["Proposal", "Blueprint", "Methodology", "Cutover Plan", "Test Plan", "Fit-to-Standard",
-                  "RICEFW List", "Status Report", "Training Material", "One-Page Summary", "Other"],
-    "departments": ["Finance", "HR", "Delivery", "Sales", "IT", "Legal", "Other"],
+                  "RICEFW List", "Status Report", "Training Material", "One-Page Summary", "Policy", "Contract", "Other"],
+    "departments": ["Finance", "HR", "Delivery", "Sales", "IT", "Legal", "Operations", "Other"],
     "security_levels": ["Internal", "Confidential", "Restricted"],
     "glossary": {"ricefw": "reports interfaces conversions enhancements forms workflows",
                  "fit-to-standard": "fit gap standard process", "blueprint": "business blueprint design",
@@ -507,13 +507,16 @@ def normalize_meta(m: dict) -> dict:
         mod = m.pop("sap_module")
         m.setdefault("system", "SAP")
         m.setdefault("module", mod)
+    if "tags" not in m:
+        m["tags"] = []
     return m
 
 
 def meta_blob(m: dict, name: str, author: str = "") -> str:
     keys = ("dcn", "doc_title", "client", "department", "industry", "system", "module", "project_name", "project_manager", "phase", "doc_type", "summary")
     extra = " ".join(f"{k} {v}" for k, v in (m.get("custom") or {}).items())
-    return " ".join(str(m.get(k, "")) for k in keys) + f" {name} {author} {extra}"
+    tags = " ".join(m.get("tags") or [])
+    return " ".join(str(m.get(k, "")) for k in keys) + f" {name} {author} {extra} {tags}"
 
 
 def scope(u: dict, flt: dict | None = None, alias: str = "d") -> tuple[str, list]:
@@ -553,7 +556,7 @@ def scope(u: dict, flt: dict | None = None, alias: str = "d") -> tuple[str, list
 
 def doc_of(r) -> dict:
     d = dict(r)
-    d["meta"] = json.loads(d["meta"])
+    d["meta"] = normalize_meta(json.loads(d["meta"]))
     return d
 
 
@@ -672,23 +675,52 @@ def pick_from(value, options) -> str:
 
 def auto_tag(filename: str, text: str, tax: dict) -> dict:
     systems = tax["systems"]
-    sys = ("You are a library cataloguer for a consultancy that delivers many enterprise systems (SAP, Oracle, Salesforce, ...). "
-           "Return ONLY JSON with keys: client, industry, system, module, project_name, phase, doc_type, doc_title, version, summary (2 sentences). "
-           f"industry must be one of {tax['industries']}; system one of {list(systems)}; module one of the modules of the chosen system: {json.dumps(systems)}; "
-           f"phase one of {tax['phases']}; doc_type one of {tax['doc_types']}. "
-           "client is the organisation the work is for ('TMC Internal' if none). project_name is the project this document belongs to ('' if not stated). "
-           "version only if visible, else ''. " + SOURCE_GUARD)
+    sys_prompt = (
+        "You are a senior library cataloguer and metadata expert for a major consulting firm. "
+        "Read the provided document and extract the most logical metadata. Do not use 'Other' unless absolutely nothing fits. "
+        "Return ONLY a JSON object with exactly these keys: "
+        "client, industry, system, module, project_name, project_manager, phase, doc_type, doc_title, version, summary, tags.\n\n"
+        f"Rules:\n"
+        f"- industry MUST be one of: {tax['industries']}\n"
+        f"- system MUST be one of: {list(systems)}\n"
+        f"- module MUST be one of the modules belonging to the chosen system: {json.dumps(systems)}\n"
+        f"- phase MUST be one of: {tax['phases']}\n"
+        f"- doc_type MUST be one of: {tax['doc_types']}\n"
+        f"- department MUST be one of: {tax['departments']}\n"
+        "- client is the organisation the work is for (use 'TMC Internal' if it's an internal document).\n"
+        "- project_name is the specific project this belongs to (empty string if not stated).\n"
+        "- project_manager is the name of the PM if mentioned (empty string if not).\n"
+        "- version is the document version if visible (e.g. 'v1.0', empty string if not).\n"
+        "- summary is a 2-sentence executive summary.\n"
+        "- tags is a list of 5-10 short, specific keywords from the text to help with future search (e.g. ['leave policy', 'maternity', '2026 update']).\n\n"
+        "- If the document is an HR policy, set department='HR', doc_type='Policy'.\n"
+        "- If the document is a financial report, set department='Finance', doc_type='Status Report'.\n"
+        + SOURCE_GUARD
+    )
     try:
-        m = parse_json(llm([{"role": "system", "content": sys}, {"role": "user", "content": f"<sources>\n{neutralize(text)}\n</sources>"}], json_mode=True))
+        m = parse_json(llm([{"role": "system", "content": sys_prompt}, {"role": "user", "content": f"<sources>\n{neutralize(text)}\n</sources>"}], json_mode=True))
     except Exception:
         LOG.exception("auto-tag failed for %s", filename)
         m = {}
+    
     system = pick_from(m.get("system"), list(systems))
-    return {"client": canon_client(m.get("client"), tax), "industry": pick_from(m.get("industry"), tax["industries"]),
-            "system": system, "module": pick_from(m.get("module") or m.get("sap_module"), systems.get(system, ["Other"])),
-            "project_name": clean(m.get("project_name") or "").strip()[:120], "phase": pick_from(m.get("phase"), tax["phases"]),
-            "doc_type": pick_from(m.get("doc_type"), tax["doc_types"]), "doc_title": clean(m.get("doc_title") or filename).strip()[:200],
-            "version": str(m.get("version") or "")[:30], "summary": clean(m.get("summary") or "")[:600]}
+    tags = as_list(m.get("tags"))[:10]  # Max 10 tags
+    
+    return {
+        "client": canon_client(m.get("client"), tax), 
+        "industry": pick_from(m.get("industry"), tax["industries"]),
+        "system": system, 
+        "module": pick_from(m.get("module") or m.get("sap_module"), systems.get(system, ["Other"])),
+        "project_name": clean(m.get("project_name") or "").strip()[:120], 
+        "project_manager": clean(m.get("project_manager") or "").strip()[:120],
+        "department": pick_from(m.get("department"), tax["departments"]),
+        "phase": pick_from(m.get("phase"), tax["phases"]),
+        "doc_type": pick_from(m.get("doc_type"), tax["doc_types"]), 
+        "doc_title": clean(m.get("doc_title") or filename).strip()[:200],
+        "version": str(m.get("version") or "")[:30], 
+        "summary": clean(m.get("summary") or "")[:600],
+        "tags": [clean(t).strip() for t in tags if clean(t).strip()]
+    }
 
 
 def vkey(version: str, name: str) -> tuple:
@@ -753,8 +785,10 @@ def ingest(file, sec_level: str, tax: dict):
     except QuotaError as e:
         return "error", str(e)
 
-    meta = auto_tag(safe, " ".join(pages)[:5000], tax)
-    meta.update(department=tax["departments"][0], security=sec_level)
+    # AI reads the document and determines ALL metadata including department and tags
+    meta = auto_tag(safe, " ".join(pages)[:10000], tax)
+    meta["security"] = sec_level
+    
     pending = u["role"] == ROLE_CONS  # consultants submit; Admin / MPO approve
     doc_id = uuid.uuid4().hex[:10]
     folder = DATA / "files" / u["org_id"]
@@ -802,6 +836,8 @@ def get_field(d: dict, f: str) -> str:
         return str(d.get(f) or "")
     if f.startswith("custom:"):
         return str((d["meta"].get("custom") or {}).get(f[7:], ""))
+    if f == "tags":
+        return ", ".join(d["meta"].get("tags") or [])
     return str(d["meta"].get(f, ""))
 
 
@@ -810,6 +846,8 @@ def set_field(d: dict, f: str, v: str) -> None:
         d["status"] = v
     elif f in COLUMN_FIELDS:
         d[f] = v
+    elif f == "tags":
+        d["meta"]["tags"] = [x.strip() for x in v.split(",") if x.strip()]
     elif f.startswith("custom:"):
         c = d["meta"].setdefault("custom", {})
         if v:
@@ -1179,7 +1217,7 @@ def migrate_schema() -> None:
         if c not in cols:
             run(f"ALTER TABLE docs ADD COLUMN {c} {ddl}")
     run("CREATE INDEX IF NOT EXISTS docs_approval ON docs(org_id, approval)")
-    rows = q("SELECT id, name, author, meta FROM docs WHERE json_extract(meta,'$.sap_module') IS NOT NULL")
+    rows = q("SELECT id, name, author, meta FROM docs WHERE json_extract(meta,'$.sap_module') IS NOT NULL OR json_extract(meta,'$.tags') IS NULL")
     if rows:
         with tx():
             for r in rows:
@@ -1642,7 +1680,7 @@ if PAGE == "Workspace":
         ss_.flash = []
 
         with st.form("search_form"):
-            qtext = st.text_input("Search", placeholder="Search by DCN, client, project, system or topic…", label_visibility="collapsed")
+            qtext = st.text_input("Search", placeholder="Search by DCN, client, project, tag, system or topic…", label_visibility="collapsed")
             do_search = st.form_submit_button("🔍 Search library", type="primary", use_container_width=True)
         with st.expander("🎚️ Filters"):
             f_client = st.multiselect("🏢 Client", facet(U, "client"), key="f_client")
@@ -1699,6 +1737,11 @@ if PAGE == "Workspace":
                          + (f' • 📍 {esc(d["unit"])} {int(it["page"])}' if it["page"] else "") + "</div>")
                 if it["snippet"]:
                     body += f'<div class="snip">{esc(it["snippet"])}</div>'
+            # Display tags in the list
+            if m.get("tags"):
+                body += "".join(f'<span class="chip" style="background:#F3F4F6;color:#374151;border:1px solid #D1D5DB">#{esc(t)}</span>' for t in m["tags"][:4])
+                if len(m["tags"]) > 4:
+                    body += f'<span class="chip" style="background:#F3F4F6;color:#374151;border:1px solid #D1D5DB">+{len(m["tags"]) - 4}</span>'
             c2.markdown(body, unsafe_allow_html=True)
 
         st.markdown("---")
@@ -1855,7 +1898,8 @@ if PAGE == "Workspace":
                     st.markdown(f"🔢 **DCN:** {esc(m.get('dcn', '-'))}  \n🏢 **Client:** {esc(m['client'])}  \n🏬 **Department:** {esc(m.get('department', '-'))}  \n"
                                 f"🔒 **Security:** {esc(m.get('security', 'Internal'))}  \n📑 **Type:** {esc(m['doc_type'])}  \n🖥️ **System:** {esc(m.get('system', '-'))}  \n🧩 **Module:** {esc(m.get('module', '-'))}  \n📁 **Project:** {esc(m.get('project_name') or '-')}  \n🧑‍💼 **Project manager:** {esc(m.get('project_manager') or '-')}  \n"
                                 f"🪜 **Phase:** {esc(m['phase'])}  \n✍️ **Author:** {esc(d['author'])}  \n👤 **Added by:** {esc(d['uploaded_by'])}"
-                                    + "".join(f"  \n🔖 **{esc(k)}:** {esc(v)}" for k, v in (m.get("custom") or {}).items()))
+                                    + "".join(f"  \n🔖 **{esc(k)}:** {esc(v)}" for k, v in (m.get("custom") or {}).items())
+                                    + (f"  \n🏷️ **Tags:** {', '.join(esc(t) for t in m['tags'])}" if m.get("tags") else ""))
                     if m.get("summary"):
                         st.caption(m["summary"])
                     if d.get("approval") == "Pending":
@@ -2015,12 +2059,12 @@ FIELD_LABELS = {"doc_title": "Title", "dcn": "DCN", "department": "Department", 
                 "doc_type": "Type", "system": "System", "module": "Module", "project_name": "Project name",
                 "project_manager": "Project manager", "phase": "Phase", "industry": "Industry", "client": "Client",
                 "version": "Version", "summary": "Summary", "author": "Author", "name": "File name", "uploaded_by": "Added by",
-                "uploaded_at": "Date added"}
+                "uploaded_at": "Date added", "tags": "Tags"}
 ALIASES = {"title": "doc_title", "document_title": "doc_title", "type": "doc_type", "sap_module": "module", "system_name": "system",
            "project": "project_name", "projectname": "project_name", "pm": "project_manager", "manager": "project_manager",
            "projectmanager": "project_manager", "file_name": "name", "filename": "name", "file": "name", "added_by": "uploaded_by",
            "uploaded": "uploaded_by", "date": "uploaded_at", "date_added": "uploaded_at", "created": "uploaded_at", "writer": "author",
-           "authors": "author", "document_control_number": "dcn"}
+           "authors": "author", "document_control_number": "dcn", "tag": "tags", "keywords": "tags"}
 CUSTOM_RE = re.compile(r"custom:\s*([A-Za-z][A-Za-z0-9 _-]{0,39})", re.I)
 LIST_FIELDS = {"department": "departments", "doc_type": "doc_types", "phase": "phases", "industry": "industries"}  # extendable by chat
 LIST_LABELS = {"departments": "the Department list", "doc_types": "the Document type list", "phases": "the Phase list", "industries": "the Industry list"}
@@ -2040,10 +2084,10 @@ ASSIST_SYSTEM = """You are the Metadata Assistant of a document library. Turn th
             "search": ""},
  "changes": {}}
 Rules:
-- "update": the user gives new values. "changes" maps field names to new values. Editable fields: doc_title, dcn, department, security, status, doc_type, system, module, project_name, project_manager, phase, industry, client, version, summary, author, name (file name), uploaded_by (added by), uploaded_at (date added, write it as YYYY-MM-DD).
+- "update": the user gives new values. "changes" maps field names to new values. Editable fields: doc_title, dcn, department, security, status, doc_type, system, module, project_name, project_manager, phase, industry, client, version, summary, author, name (file name), uploaded_by (added by), uploaded_at (date added, write it as YYYY-MM-DD), tags (comma-separated string).
 - "system" is the technology platform (SAP, Oracle, Salesforce ...). "module" belongs to a system. Set both when the user mentions both.
 - If the user gives a value that is NOT in the allowed lists (a new department, type, phase, industry, system or module), return it exactly as written: the app will offer to add it to the vocabulary. Security must be one of its list.
-- Any OTHER attribute the user wants to record (language, tags, contract number ...) is a custom field: use the key "custom:<Field name>", e.g. {"custom:Contract No": "C-104"}. Reuse existing custom field names when they match. An empty value removes a custom field.
+- Any OTHER attribute the user wants to record (language, contract number ...) is a custom field: use the key "custom:<Field name>", e.g. {"custom:Contract No": "C-104"}. Reuse existing custom field names when they match. An empty value removes a custom field.
 - "Add the author" / "set the author" / "author: X" all mean changing the field author. Never ask which field when the user already named it.
 - "retag": the user wants you to re-read the documents and suggest better metadata.
 - "show": the user wants to list or find documents.
@@ -2056,7 +2100,7 @@ Allowed values:
 ALLOWED_VALUES"""
 
 HELP_TEXT = ("I can **change any metadata field** (title, DCN, author, file name, added by, date added, department, security level, status, type, "
-             "system, module, project name, project manager, phase, industry, client, version, summary, or any **custom field** you invent), "
+             "system, module, project name, project manager, phase, industry, client, version, summary, tags, or any **custom field** you invent), "
              "**add new departments, types, systems or modules** to your vocabulary, **re-tag documents from their content**, and **list documents**. "
              "Name documents by DCN, tick them in the Workspace, or describe them (e.g. “all Tata Motors blueprints”).")
 
@@ -2165,7 +2209,7 @@ def validate_changes(raw, n_targets: int, ctx_system: str | None = None):
         norm[f] = clean(v).strip()
     for f in sorted(norm, key=lambda k: 0 if k == "system" else 1):
         v = norm[f]
-        optional = f in ("summary", "version", "author", "project_name", "project_manager") or f.startswith("custom:")
+        optional = f in ("summary", "version", "author", "project_name", "project_manager", "tags") or f.startswith("custom:")
         if not v and not optional:
             errs.append(f"{field_label(f)} cannot be empty.")
             continue
@@ -2225,6 +2269,8 @@ def validate_changes(raw, n_targets: int, ctx_system: str | None = None):
             v = re.sub(r"[\\/]", "_", v)[:150]
         elif f in ("author", "uploaded_by", "project_name", "project_manager"):
             v = v[:120]
+        elif f == "tags":
+            v = ", ".join(x.strip() for x in v.split(",") if x.strip())
         elif f.startswith("custom:"):
             v = v[:300]
         else:
@@ -2276,7 +2322,7 @@ def retag_changes(d: dict) -> dict:
     text = " ".join(t for _, t in get_pages(d["id"])[:4])[:5000]
     new = auto_tag(d["name"], text, tax)
     ch = {}
-    for f in ("doc_type", "system", "module", "project_name", "phase", "industry", "client", "doc_title", "version", "summary"):
+    for f in ("doc_type", "system", "module", "project_name", "phase", "industry", "client", "doc_title", "version", "summary", "tags"):
         v = new.get(f)
         if v and v not in ("Other", "Unknown") and not (f == "doc_title" and v == d["name"]):
             ch[f] = v
@@ -2548,7 +2594,7 @@ def render_assistant() -> None:
                   on_click=lambda: ss_.__setitem__("ma_pending", "Set the security level of the selected documents to Confidential"))
         st.button("🧹 Clear chat", disabled=not ss_.ma_chat, use_container_width=True, on_click=lambda: ss_.__setitem__("ma_chat", []))
         st.markdown('<div class="panel-title">🛡️ How changes are applied</div>', unsafe_allow_html=True)
-        st.caption("• Title, author, file name, type, system, module, project, phase, industry, client, department, version, summary and custom fields: applied instantly, with Undo.\n\n"
+        st.caption("• Title, author, file name, type, system, module, project, phase, industry, client, department, version, summary, tags and custom fields: applied instantly, with Undo.\n\n"
                    "• Security, status, DCN, added-by/date, new vocabulary values, more than 5 documents, or AI-suggested values: preview first, you confirm.\n\n"
                    "• Every change is validated and logged in the audit trail.")
 
@@ -2561,6 +2607,7 @@ def render_assistant() -> None:
                             "- “Set the department of DCN-2026-0004 to Digital” (a new value is offered for your vocabulary)\n"
                             "- “Set system to Oracle and module to Financials for the selected documents”\n"
                             "- “Set project name to Apollo and project manager to Ali Khan on DCN-2026-0001”\n"
+                            "- “Add tags: contract, 2026, renewal to DCN-2026-0002”\n"
                             "- “Add author Nadeem Sohail to DCN-2026-0001”\n"
                             "- “Mark DCN-2026-0002 as Superseded”\n"
                             "- “Rename DCN-2026-0007 to ‘Cutover Plan v2’”\n"
