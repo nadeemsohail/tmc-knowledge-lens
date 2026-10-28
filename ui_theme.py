@@ -39,7 +39,7 @@ h1,h2,h3,h4{letter-spacing:-.015em;color:var(--ink)}
 @keyframes klfade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 @keyframes klflow{0%{background-position:0 0,0% 50%}100%{background-position:0 0,300% 50%}}
 @keyframes klpulse{0%{box-shadow:0 0 0 0 rgba(52,211,153,.7)}70%{box-shadow:0 0 0 8px rgba(52,211,153,0)}100%{box-shadow:0 0 0 0 rgba(52,211,153,0)}}
-div[data-testid="stVerticalBlock"]>div{animation:klfade .35s ease both}
+.hero,.pcard{animation:klfade .35s ease both}
 
 /* ---------- hero / top bar ---------- */
 .topbar{
@@ -179,8 +179,14 @@ button[kind="header"],button[data-testid="baseButton-header"]{color:#fff!importa
 .insight-banner h4{margin:0 0 4px;color:#065F46;font-weight:800}.insight-banner p{margin:0;color:#14532D;line-height:1.55}
 
 /* ---------- chat ---------- */
-div[data-testid="stChatMessage"]{border-radius:16px;padding:12px 16px;margin-bottom:8px;border:1px solid var(--line);background:#fff;box-shadow:var(--shadow-sm)}
-div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]){background:linear-gradient(135deg,#F0FDF9 0%,#F5FAFF 100%);border-color:#CFF1E3}
+div[data-testid="stChatMessage"]{background:transparent!important;border:none!important;box-shadow:none!important;padding:6px 2px;margin-bottom:2px;gap:12px}
+div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]){flex-direction:row-reverse}
+div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) [data-testid="stChatMessageContent"]{background:#ECFDF5;border:1px solid #CFF1E3;border-radius:18px 18px 4px 18px;padding:9px 16px;width:fit-content;max-width:84%;margin-left:auto;color:var(--ink)}
+div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) [data-testid="stChatMessageContent"]{padding:2px 4px;width:100%}
+/* thumbs under an answer: icon only, quiet until hovered */
+div[data-testid="stFeedback"]{margin-top:2px}
+div[data-testid="stFeedback"] button{color:#94A3B8;border-radius:10px;transition:background .15s,color .15s}
+div[data-testid="stFeedback"] button:hover{background:#ECFDF5;color:var(--brand)}
 div[data-testid="stChatMessageAvatarAssistant"]{background:linear-gradient(135deg,var(--ai-1),var(--ai-2))!important;color:#fff}
 div[data-testid="stChatMessageAvatarUser"]{background:linear-gradient(135deg,#334155,#0F172A)!important;color:#fff}
 div[data-testid="stChatInput"]{background:transparent!important}
@@ -216,6 +222,14 @@ div[data-testid="stChatInput"] button:disabled{background:#CBD5E1!important;box-
 
 @media (max-width:900px){.topbar{padding:20px}.topbar h1{font-size:1.8rem}.topbar .pills{justify-content:flex-start}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.mi{font-family:"Material Symbols Rounded";font-weight:400;font-style:normal;font-size:1.2em;line-height:1;letter-spacing:normal;text-transform:none;
+  display:inline-block;width:1.1em;overflow:hidden;white-space:nowrap;direction:ltr;vertical-align:-.2em;margin-right:.4em;
+  -webkit-font-smoothing:antialiased;font-feature-settings:"liga";-webkit-font-feature-settings:"liga";font-variation-settings:"FILL" 0,"wght" 500,"GRAD" 0,"opsz" 24}
+.kpi-icon .mi,.rolecard .ic .mi{margin:0;font-size:1.35rem;width:1.35rem}
+.chip .mi{font-size:1.08em;margin-right:.25em}
+.panel-title .mi,.hero h2 .mi,.pcard h4 .mi{color:var(--brand)}
+.topbar .pill .mi{margin-right:.35em}
+.ma-badge .mi{font-size:1.05em;margin-right:.25em}
 </style>
 """
 
@@ -224,9 +238,14 @@ def _e(s) -> str:
     return html.escape(str(s))
 
 
-def topbar(subtitle: str, pills: list[str] | None = None) -> str:
-    """Hero banner. `pills` are plain strings (escaped here)."""
-    p = "".join(f'<span class="pill">{_e(x)}</span>' for x in (pills or []))
+def mi(name: str) -> str:
+    """Inline Material Symbols icon for HTML blocks (names are fixed identifiers, never user text)."""
+    return f'<span class="mi">{name}</span>'
+
+
+def topbar(subtitle: str, pills: list | None = None) -> str:
+    """Hero banner. `pills` are plain strings or (icon_name, text) tuples; text is escaped here."""
+    p = "".join(f'<span class="pill">{mi(x[0]) if isinstance(x, tuple) else ""}{_e(x[1] if isinstance(x, tuple) else x)}</span>' for x in (pills or []))
     return (f'<div class="topbar"><div class="logo"><img src="{LOGO}" alt="TMC"></div>'
             f'<div class="titles"><span class="ai-badge"><i class="dot"></i>AI-powered knowledge workspace</span>'
             f'<h1>✦ Knowledge <span class="grad">Lens</span></h1><p>{_e(subtitle)}</p></div>'
