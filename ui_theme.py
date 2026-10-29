@@ -1,11 +1,5 @@
 """
 ui_theme.py - modern, AI-product look for TMC Knowledge Lens.
-
-Exports:
-    CSS          : str   - global <style> block
-    mi(name)     : str   - inline Material Symbols icon
-    topbar(subtitle, pills=None) : str  - hero banner
-    footer_html(version) : str         - fixed footer
 """
 from __future__ import annotations
 
@@ -189,6 +183,7 @@ div[data-testid="stChatMessage"]{background:transparent!important;border:none!im
 div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]){flex-direction:row-reverse}
 div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) [data-testid="stChatMessageContent"]{background:#ECFDF5;border:1px solid #CFF1E3;border-radius:18px 18px 4px 18px;padding:9px 16px;width:fit-content;max-width:84%;margin-left:auto;color:var(--ink)}
 div[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) [data-testid="stChatMessageContent"]{padding:2px 4px;width:100%}
+/* thumbs under an answer: icon only, quiet until hovered */
 div[data-testid="stFeedback"]{margin-top:2px}
 div[data-testid="stFeedback"] button{color:#94A3B8;border-radius:10px;transition:background .15s,color .15s}
 div[data-testid="stFeedback"] button:hover{background:#ECFDF5;color:var(--brand)}
@@ -205,6 +200,7 @@ div[data-testid="stChatInput"]>div{
   padding: 0 16px !important;
 }
 div[data-testid="stChatInput"]>div:focus-within{box-shadow:0 10px 34px rgba(16,185,129,.28),0 0 0 4px rgba(16,185,129,.12)}
+/* Force the internal textarea to not expand vertically */
 div[data-testid="stChatInput"] textarea{font-size:1rem;color:var(--ink); height:56px !important; min-height:56px !important; max-height:56px !important; overflow-y:auto !important; padding-top:16px !important; padding-bottom:16px !important;}
 div[data-testid="stChatInput"] button{border-radius:50%!important;background:linear-gradient(135deg,#0B7A50,#10B981)!important;color:#fff!important;border:none;box-shadow:0 4px 12px rgba(16,185,129,.4); width:40px !important; height:40px !important;}
 div[data-testid="stChatInput"] button:disabled{background:#CBD5E1!important;box-shadow:none}
@@ -239,7 +235,6 @@ div[data-testid="stChatInput"] button:disabled{background:#CBD5E1!important;box-
 
 
 def _e(s) -> str:
-    """HTML-escape any value for safe inline use."""
     return html.escape(str(s))
 
 
@@ -248,26 +243,15 @@ def mi(name: str) -> str:
     return f'<span class="mi">{name}</span>'
 
 
-def topbar(subtitle: str, pills=None) -> str:
+def topbar(subtitle: str, pills: list | None = None) -> str:
     """Hero banner. `pills` are plain strings or (icon_name, text) tuples; text is escaped here."""
-    parts = []
-    for x in (pills or []):
-        if isinstance(x, tuple):
-            icon, text = x[0], x[1]
-            parts.append(f'<span class="pill">{mi(icon)}{_e(text)}</span>')
-        else:
-            parts.append(f'<span class="pill">{_e(x)}</span>')
-    p = "".join(parts)
-    return (
-        f'<div class="topbar"><div class="logo"><img src="{LOGO}" alt="TMC"></div>'
-        f'<div class="titles"><span class="ai-badge"><i class="dot"></i>AI-powered knowledge workspace</span>'
-        f'<h1>✦ Knowledge <span class="grad">Lens</span></h1><p>{_e(subtitle)}</p></div>'
-        + (f'<div class="pills">{p}</div>' if p else "") + "</div>"
-    )
+    p = "".join(f'<span class="pill">{mi(x[0]) if isinstance(x, tuple) else ""}{_e(x[1] if isinstance(x, tuple) else x)}</span>' for x in (pills or []))
+    return (f'<div class="topbar"><div class="logo"><img src="{LOGO}" alt="TMC"></div>'
+            f'<div class="titles"><span class="ai-badge"><i class="dot"></i>AI-powered knowledge workspace</span>'
+            f'<h1>✦ Knowledge <span class="grad">Lens</span></h1><p>{_e(subtitle)}</p></div>'
+            + (f'<div class="pills">{p}</div>' if p else "") + "</div>")
 
 
 def footer_html(version: str) -> str:
-    return (
-        f'<div class="kl-footer"><span class="live"></span><b>TMC Knowledge Lens</b> v{_e(version)} • '
-        f'Built by TMC AI Internal Digital Department © {datetime.now().year}</div>'
-    )
+    return (f'<div class="kl-footer"><span class="live"></span><b>TMC Knowledge Lens</b> v{_e(version)} • '
+            f'Built by TMC AI Internal Digital Department © {datetime.now().year}</div>')
